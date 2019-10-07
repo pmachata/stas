@@ -8,4 +8,7 @@ edition = "2018"
 
 [dependencies]
 nix = "*"
+neli = { git = "https://github.com/jbaublitz/neli.git" }
 libc = "*"
+glob = "*"
+termion = "1"
