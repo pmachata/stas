@@ -1,0 +1,39 @@
+* v2
+- how often counter baseline is updated:
+  - once a second (for measuring throughput: pps, kbps)
+  - once at start (gauge measuring relative change: p, kb since tool start)
+  - never (absolute gauge: p, kb indicated by the counter)
+
+- units
+  - ip-link and similar counters have standard meaning, and th.sh should
+    know what unit to use. That is not the case for ethtool counters
+    though, where th.sh should allow specifying in a config file what unit
+    each of the counters is. E.g.:
+
+    : *_octets_* = B
+    : *_pause_duration_* = us/s
+
+    These units could then be used to figure out how to display the
+    counter, and if it should be absolute or relative.
+
+
+- different types of counters
+  - ethtool
+  - ip link
+  - tc ingress, egress
+
+- grouping
+  - allow selecting several interfaces in one go
+  - allow selecting several counters in one go
+    - allow wild cards as well
+  - e.g. (eth0, eth1) a_frames_transmitted_ok
+
+- aggregated stats
+  - average of several counters, sum of several counters, divide one
+    counter by another (to get avg. packet size)
+  - average and variance over time
+
+- top talkers
+  - show the counters that change, sorted by how much they change
+
+- config file

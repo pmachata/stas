@@ -1,0 +1,213 @@
+
+
+- wlp* \( ethtool: \( *_packets *_fragments \) /pps *_bytes /B /bps \)
+
+- ethtool: \( swp1 swp2 \) \( a_octets_received_ok rx_octets_prio_* \) /pps
+
+- \( swp1 a_octets_received_ok \) /pps
+
+- Expr ::= [Namespace:] CounterExpr [CounterExpr ...]
+- CounterExpr ::= IfnameMatchGrp CounterMatchGrp
+- Namespace ::= "ethtool:" | "link:"
+
+- IfnameMatchGrp ::= "(" IfnameMatchGrp ")"
+- IfnameMatchGrp ::= glob IfnameMatchGrpOpt
+- IfnameMatchGrpOpt ::= IfnameMatchGrp
+- IfnameMatchGrpOpt ::= ""
+
+- CounterMatchGrp ::= "(" CounterMatchGrp ")"
+- CounterMatchGrp ::= Namespace CounterMatchGrp
+- CounterMatchGrp ::= CounterMatchGrp Unit
+- CounterMatchGrp ::= glob CounterMatchGrpOpt
+- CounterMatchGrpOpt ::= CounterMatchGrp
+- CounterMatchGrpOpt ::= ""
+
+- ethtool: \( swp1 swp2 \) \( a_octets_received_ok rx_octets_prio_* \) /pps
+- (Expr
+    (Namespace "ethtool")
+    (IfnameMatchGrp "swp1"
+      (IfnameMatchGrpOpt
+        (IfnameMatchGrp "swp2"
+          (IfnameMatchGrpOpt ""))))
+    (CounterMatchGrp
+      (CounterMatchGrp "a_octets_received_ok"
+        (CounterMatchGrpOpt
+          (CounterMatchGrp "rx_octets_prio_*"
+            CounterMatchGrpOpt "")))
+      (Unit "pps")))
+
+- \( swp1 swp2 \) ethtool: \( a_octets_received_ok rx_octets_prio_* \) /pps
+- (Expr
+    (IfnameMatchGrp "swp1"
+      (IfnameMatchGrpOpt
+        (IfnameMatchGrp "swp2"
+          (IfnameMatchGrpOpt ""))))
+    (CounterMatchGrp
+      (Namespace "ethtool")
+      (CounterMatchGrp
+        (CounterMatchGrp "a_octets_received_ok"
+          (CounterMatchGrpOpt
+            (CounterMatchGrp "rx_octets_prio_*"
+              CounterMatchGrpOpt "")))
+        (Unit "pps"))))
+
+- \( swp1 swp2 \) \( ethtool: a_octets_received_ok rx_octets_prio_* \) /pps
+- (Expr
+    (IfnameMatchGrp "swp1"
+      (IfnameMatchGrpOpt
+        (IfnameMatchGrp "swp2"
+          (IfnameMatchGrpOpt ""))))
+    (CounterMatchGrp
+      (CounterMatchGrp "a_octets_received_ok"
+        (CounterMatchGrpOpt
+          (CounterMatchGrp "rx_octets_prio_*"
+            CounterMatchGrpOpt "")))
+      (Unit "pps"))))
+
+- counters:
+  - it looks like we can make do without parentheses
+  - ethtool: tx_*                       # ethtool counters starting with tx_
+  - ethtool: tx_bytes tx_packets        # these two ethtool counters
+  - qdisc: 1: bytes                     # the qdisc itself
+  - qdisc: ingress bytes                # ingress clsact qdisc
+  - qdisc: egress bytes                 # egress clsact qdisc
+  - qdisc: 1:1 bytes                    # a class
+  - qdisc: 1:* bytes                    # all classes
+  - qdisc: 1:1 1:2 1:3 bytes            # these classes
+  - qdisc: 1:1 1:2 bytes drops          # these counters under these classes
+  - action: [a:b|ingress|egress] [protocol x] [pref y] [chain z] [handle h] [action a] counter
+    - filters are messy. It looks like we will need to use keywords to annotate
+      what's what. Then "bytes" and "packets" (or just a glob, or mentioning
+      several would work as well) would terminate the selector.
+    - default for handle (a:b) is all
+    - default for protocol is all
+    - default for chain is 0
+    - either pref or handle specify the filter. If neither is given, it's "all"
+      - it's called "handle" in tc output, but that word is commonly used to
+        refer to qdisc handle. Maybe we want to call this "filter", or support
+        both? But no, that would make it harder to copy stuff over from tc.
+    - action specifies action order (order of action within the filter). Default
+      is * (all actions)
+  - action: ingress handle 0x123 bytes packets  # protocol all, chain 0, these two counters
+  - action: ingress pref 1000 *         # prot all, chain 0, pref 1000, all counters
+  - action: 1: bytes                    # all actions on 1:, bytes
+  - action: bytes                       # all actions on all qdiscs, bytes
+  - action: 1: chain * handle 0x123 bytes # this handle on all chains
+  - action: 1:1 1:2 chain 0 1 2 handle 0x123 0x234 bytes # each keyword can have many arguments
+  - action: \( chain 1 handle 0x123 \) \( chain 2 handle 0x234 \) bytes
+
+- Expr ::= [Namespace:] CounterExpr [CounterExpr ...]
+- CounterExpr ::= IfnameMatch CounterMatchGrp
+- Namespace ::= "ethtool:" | "link:"
+
+- IfnameMatch ::= "(" glob* ")"
+- IfnameMatch ::= glob
+  - xxx make interface notation recognizable? So that the common case of several
+    counters can be simply if1 ctr1 ctr2 ctr3 if2 ctr4, i.e. without having to
+    enclose the counters into braces.  E.g. "@"glob or some such.
+    - then I wouldn't need to bracketize several interfaces. Mentioning them in
+      a row would be enough
+      - "@if1 @if2 ctr1 ctr2" == "@if1 ctr1 ctr2 @if2 ctr1 ctr2"
+      - we still need to support parens for units, so that it's not awkward to
+        set units of many counters at once. They will be handy for namespaces
+	as well
+
+- CounterMatchGrp     ::= CounterMatchGrpNs CounterMatchGrp
+- CounterMatchGrp     ::= ""
+- CounterMatchGrpNs   ::= [Namespace] CounterMatchGrpUnit
+  - Namespace could be higher up so that it applies to all globs in the
+    chain that follow it. Then again, the grouping operators allow
+    expressing this, so whatever.
+- CounterMatchGrpUnit ::= CounterMatchGrpGlob [Unit]
+- CounterMatchGrpGlob ::= "(" CounterMatchGrp ")"
+- CounterMatchGrpGlob ::= glob
+
+
+- ethtool: \( swp1 swp2 \) \( a_octets_received_ok rx_octets_prio_* \) /pps
+- (Expr
+    (Namespace "ethtool")
+    (CounterExpr
+      (IfnameMatchGrp "swp1"
+        (IfnameMatchGrp "swp2")))
+      (CounterMatchGrp
+        (CounterMatchGrpNs
+          (CounterMatchGrpUnit
+            (CounterMatchGrpGlob
+              (CounterMatchGrp
+                (CounterMatchGrpNs
+                  (CounterMatchGrpUnit
+                    (CounterMatchGrpGlob "a_octets_received_ok")))
+                (CounterMatchGrp
+                  (CounterMatchGrpNs
+                    (CounterMatchGrpUnit
+                      (CounterMatchGrpGlob "rx_octets_prio_*")))
+                  (CounterMatchGrp ""))))
+            (Unit "pps")))
+        (CounterMatchGrp "")))
+
+- \( swp1 swp2 \) ethtool: \( a_octets_received_ok rx_octets_prio_* \) /pps
+- (Expr
+    (CounterExpr
+      (IfnameMatchGrp "swp1"
+        (IfnameMatchGrp "swp2")))
+      (CounterMatchGrp
+        (CounterMatchGrpNs
+          (Namespace "ethtool")
+          (CounterMatchGrpUnit
+            (CounterMatchGrpGlob
+              (CounterMatchGrp
+                (CounterMatchGrpNs
+                  (CounterMatchGrpUnit
+                    (CounterMatchGrpGlob "a_octets_received_ok")))
+                (CounterMatchGrp
+                  (CounterMatchGrpNs
+                    (CounterMatchGrpUnit
+                      (CounterMatchGrpGlob "rx_octets_prio_*")))
+                  (CounterMatchGrp ""))))
+            (Unit "pps")))
+        (CounterMatchGrp "")))
+
+- \( swp1 swp2 \) \( ethtool: a_octets_received_ok rx_octets_prio_* /pps \)
+- (Expr
+    (CounterExpr
+      (IfnameMatchGrp "swp1"
+        (IfnameMatchGrp "swp2")))
+      (CounterMatchGrp
+        (CounterMatchGrpNs
+          (CounterMatchGrpUnit
+            (CounterMatchGrp
+              (CounterMatchGrpNs
+                (Namespace "ethtool")
+                (CounterMatchGrpUnit
+                  (CounterMatchGrpGlob "a_octets_received_ok")))
+              (CounterMatchGrp
+                (CounterMatchGrpNs
+                  (CounterMatchGrpUnit
+                    (CounterMatchGrpGlob "rx_octets_prio_*")
+                    (Unit "pps")))
+                (CounterMatchGrp "")))))))
+
+- @swp1 @swp2 ethtool: a_octets_received_ok /pps
+  - (@swp1 @swp2) (ethtool: (a_octets_received_ok /pps))
+- ethtool: @swp1 @swp2 a_octets_received_ok /B /bps rx_packets_prio_* /pps
+  - ethtool: ((@swp1 @swp2) ((a_octets_received_ok /B) /bps) (rx_packets_prio_* /pps))
+- ethtool: @swp1 @swp2 a_octets_received_ok a_octets_something /B /bps
+  - ethtool: ((@swp1 @swp2) (((a_octets_received_ok a_octets_something) /B) /bps))
+
++---------+----------+--------------------------------------+
+|         |          | a_|                                  | <-- filters
++---------+----------+--------------------------------------+
+|  swp1   | *ethtool |  a_octets_received : bit  [x] /s     |
+| *swp2   |  qdisc   | *a_octets_trans... : bit  [x] /s     |
+|  swp3   |  action  | *a_packets_rece... : pkt  [x] /s     |
+| *swp4   |  ip link |  etc.              :                 |
+| *swp5   |          |  etc.              :                 |
+|  swp6   |          |                    :                 |
++---------+----------+--------------------------------------+
+
+- arrows up/down move active cursor within one list
+- arrows left/right move activity between lists
+- typing and backspace modifies the filter
+- space un/marks/toggles active item
+
+- OR: just read json for first iteration?
