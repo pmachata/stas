@@ -2,23 +2,28 @@ extern crate alloc;
 extern crate libc;
 extern crate nix;
 
-use std::mem;
 use std::ffi::CStr;
+use std::mem;
 use std::os::unix::io::RawFd;
 
-use libc::{c_void, c_char};
+use libc::{c_char, c_void};
 
 use nix::sys::socket;
-use nix::sys::socket::{AddressFamily, SockType, SockFlag};
+use nix::sys::socket::{AddressFamily, SockFlag, SockType};
 use nix::unistd::close;
 
 fn open_sock() -> RawFd {
-    match socket::socket(AddressFamily::Inet, SockType::Datagram, SockFlag::empty(), None) {
+    match socket::socket(
+        AddressFamily::Inet,
+        SockType::Datagram,
+        SockFlag::empty(),
+        None,
+    ) {
         Ok(raw_fd) => raw_fd,
         Err(e) => {
             println!("Failed to open socket: {}", e);
             std::process::exit(1);
-        },
+        }
     }
 }
 
@@ -70,7 +75,7 @@ fn ethtool_ioctl(fd: RawFd, ifname: &String, data: *mut c_void) {
         ifr_data: data,
     };
 
-    let err = unsafe {libc::ioctl(fd, SIOCETHTOOL, &ifr)};
+    let err = unsafe { libc::ioctl(fd, SIOCETHTOOL, &ifr) };
     if err != 0 {
         println!("ioctl SIOCETHTOOL failed: errno={}", err);
         std::process::exit(1);
@@ -101,7 +106,7 @@ fn ethtool_ss_stats_names(fd: RawFd, ifname: &String, len: u32) -> Vec<String> {
     let layout = alloc::alloc::Layout::from_size_align(sz, gal).unwrap();
 
     let strings: &mut ethtool_gstrings = unsafe {
-        let ptr: *mut u8  = alloc::alloc::alloc_zeroed(layout);
+        let ptr: *mut u8 = alloc::alloc::alloc_zeroed(layout);
         if ptr.is_null() {
             alloc::alloc::handle_alloc_error(layout);
         }
@@ -145,7 +150,7 @@ fn ethtool_ss_stats_values(fd: RawFd, ifname: &String, len: u32) -> Vec<u64> {
     let layout = alloc::alloc::Layout::from_size_align(sz, 8).unwrap();
 
     let stats: &mut ethtool_stats = unsafe {
-        let ptr: *mut u8  = alloc::alloc::alloc_zeroed(layout);
+        let ptr: *mut u8 = alloc::alloc::alloc_zeroed(layout);
         if ptr.is_null() {
             alloc::alloc::handle_alloc_error(layout);
         }
@@ -189,7 +194,9 @@ pub fn stats_for(ifname: &String) -> Vec<Stat> {
     let mut statvalues = ethtool_ss_stats_values(fd, &ifname, len);
     close(fd).unwrap();
 
-    statnames.drain(..).zip(statvalues.drain(..))
-        .map(|(name, value)| Stat{name, value})
+    statnames
+        .drain(..)
+        .zip(statvalues.drain(..))
+        .map(|(name, value)| Stat { name, value })
         .collect()
 }

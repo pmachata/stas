@@ -12,9 +12,9 @@ fn ifla_link_name(ifi: Nlmsghdr<u16, Ifinfomsg<Ifla>>) -> Option<String> {
         match attr.rta_type {
             Ifla::Ifname => {
                 // Snip terminating zero.
-                let prefix = &payload[.. (payload.len() - 1)];
-                return Some(String::from_utf8_lossy(prefix).into_owned())
-            },
+                let prefix = &payload[..(payload.len() - 1)];
+                return Some(String::from_utf8_lossy(prefix).into_owned());
+            }
             _ => break,
         }
     }
