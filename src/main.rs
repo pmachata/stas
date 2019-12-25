@@ -82,12 +82,19 @@ fn main() {
         ctmatch = _ctmatch;
     }
 
+    let cycle_ms = 500;
+    let avg_s = 5;
+    let history_depth = 1000 * avg_s / cycle_ms;
+    let avg_s_str = &format!("{}s avg", avg_s);
+
     let mut state = Vec::<CounterHistory>::new();
     loop {
-        // Trim the history at 10 elements.
+        let start = std::time::Instant::now();
+
+        // Trim the history at history_depth.
         for entry in &mut state {
             entry.age += 1;
-            if entry.age >= 5 {
+            if entry.age >= history_depth {
                 entry.history.remove(0);
             }
         }
@@ -128,7 +135,7 @@ fn main() {
         print!("{}", termion::clear::All);
         let mut line = 1;
 
-        let headers = vec!["iface", "counter", "delta", "spot", "5s avg"];
+        let headers = vec!["iface", "counter", "delta", "spot", avg_s_str];
 
         let ifname_col_w = state
             .iter()
@@ -163,6 +170,7 @@ fn main() {
         line_out(headers[0], headers[1], headers[2], headers[3], headers[4]);
         print!("{}", termion::style::Reset);
 
+        let mut last_ifname = "";
         for entry in &state {
             let mi = *entry.history.first().unwrap() as i64;
             let ma = *entry.history.last().unwrap() as i64;
@@ -179,15 +187,21 @@ fn main() {
             let delta = (ma - entry.base as i64) as i32;
 
             line_out(
-                &entry.key.ifname,
+                if last_ifname != entry.key.ifname {
+                    &entry.key.ifname
+                } else {
+                    ""
+                },
                 &entry.key.ctname,
                 &humanize(delta, " "),
                 &humanize(spot, " "),
                 &humanize(avg, " "),
             );
+            last_ifname = &entry.key.ifname;
         }
+        print!("\nOverhead {:?}", start.elapsed());
         stdout().flush().unwrap();
 
-        thread::sleep(time::Duration::from_millis(500));
+        thread::sleep(time::Duration::from_millis(cycle_ms as u64) - start.elapsed());
     }
 }
