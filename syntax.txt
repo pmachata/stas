@@ -64,6 +64,23 @@
             CounterMatchGrpOpt "")))
       (Unit "pps"))))
 
+- units:
+  - /1, /b, /B, /s, /p - units, bits, bytes, seconds, packets
+  - /*ps, /d* - per second, delta since the start
+  - /K*, /M*, /G*, /m*, /u*, /n*, ... - unit prefixes
+  - more than one unit prefix can't be used at once
+  - /*ps and /d* are mutually exclusive as well
+  - conversions:
+    - 1:X == 1:1      # Converting to "1" doesn't change the value, only the unit.
+    - X:KX == 1:1000  # Unit prefixes work in an obvious manner
+    - b:B == 1:8      # Bit/Byte conversions
+    - default unit is "1"
+  - e.g.:
+    - /usps   ::= 1 -> us & show per-second values
+    - /B/bps  ::= 1 -> B -> b & show per-second values
+    - /dp     ::= 1 -> packets & show delta since the program started
+    - /us     ::= 1 -> us & show the value as is
+
 - counters:
   - it looks like we can make do without parentheses
   - ethtool: tx_*                       # ethtool counters starting with tx_
