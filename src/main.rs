@@ -17,13 +17,6 @@ struct CounterKey {
     ctname: String,
 }
 
-struct CounterHistory {
-    key: CounterKey,
-    history: Vec<u64>,
-    base: u64,
-    age: u32,
-}
-
 fn humanize(value: i32, base: &str) -> String {
     let units = vec!["p", "n", "u", "m", " ", "K", "M", "G", "T", "P"];
     let mut unit = units.iter().position(|u| *u == base).unwrap();
@@ -57,6 +50,7 @@ fn humanize(value: i32, base: &str) -> String {
 enum UnitBase {
     Units,
     Packets,
+    Seconds,
     Bits,
     Bytes,
 }
@@ -80,39 +74,99 @@ struct UnitChain {
     freq: UnitFrequency,
 }
 
-fn parse_unit_one<I>(_it: &mut Peekable<I>) -> Result<(UnitPrefix, UnitFrequency), String>
+fn parse_unit_pfx<I>(it: &mut Peekable<I>) -> Result<UnitPrefix, String>
 where
     I: Iterator<Item = char>,
 {
-    Ok((
-        UnitPrefix {
-            power: 0,
-            unit: UnitBase::Bytes,
-        },
-        UnitFrequency::PerSecond,
-    ))
+    let power = match it.peek() {
+        Some(&'G') => {
+            it.next();
+            9
+        }
+        Some(&'M') => {
+            it.next();
+            6
+        }
+        Some(&'k') | Some(&'K') => {
+            it.next();
+            3
+        }
+        Some(&'m') => {
+            it.next();
+            -3
+        }
+        Some(&'u') => {
+            it.next();
+            -6
+        }
+        Some(&'n') => {
+            it.next();
+            -9
+        }
+        _ => 0,
+    };
+
+    let unit = match it.next() {
+        Some('p') => UnitBase::Packets,
+        Some('s') => UnitBase::Seconds,
+        Some('B') => UnitBase::Bytes,
+        Some('b') => UnitBase::Bits,
+        Some('1') => UnitBase::Units,
+        Some(c) => {
+            return Err(format!("Unknown unit, '{}'", c));
+        }
+        _ => {
+            return Err("Missing unit".to_string());
+        }
+    };
+
+    Ok(UnitPrefix {
+        power: power,
+        unit: unit,
+    })
 }
 
-fn parse_unit_chain<I>(mut it: Peekable<I>) -> Result<UnitChain, String>
-where
-    I: Iterator<Item = char>,
-{
+fn parse_unit_freq(str: &str) -> Result<(UnitPrefix, UnitFrequency), String> {
+    let mut freq: Option<UnitFrequency> = None;
+    let mut it = str.chars().peekable();
+
+    if it.peek() == Some(&'d') {
+        it.next();
+        freq = Some(UnitFrequency::Delta);
+    }
+
+    let pfx = parse_unit_pfx(&mut it)?;
+
+    let rest = it.collect::<String>();
+    if rest.is_empty() {
+        return Ok((pfx, freq.unwrap_or(UnitFrequency::AsIs)));
+    }
+
+    if freq.is_some() {
+        return Err(format!("Unit suffix not expected: {}", rest));
+    }
+
+    if rest == "ps" {
+        return Ok((pfx, UnitFrequency::PerSecond));
+    }
+
+    return Err(format!("Unit suffix not understood: {}", rest));
+}
+
+fn parse_unit_chain(str: &str) -> Result<UnitChain, String> {
     let mut units = Vec::<UnitPrefix>::new();
     let mut freq = UnitFrequency::AsIs;
 
-    while let Some(c) = it.next() {
-        if c == '/' {
-            let (unit, this_freq) = parse_unit_one(&mut it)?;
-            if this_freq != UnitFrequency::AsIs {
-                if freq != UnitFrequency::AsIs {
-                    return Err("Only one frequency allowed in a unit chain.".to_string());
-                }
-                freq = this_freq;
+    // The unit string starts with a '/', so skip the first (empty) element.
+    for substr in str.split('/').skip(1) {
+        let (unit, this_freq) = parse_unit_freq(substr)?;
+        if this_freq != UnitFrequency::AsIs {
+            if freq != UnitFrequency::AsIs {
+                return Err("Only one frequency allowed in a unit chain.".to_string());
             }
-            units.push(unit);
-        } else {
-            return Err(format!("Expected '/' to separate units, got '{}'.", c));
+            freq = this_freq;
         }
+        units.push(unit);
     }
 
     Ok(UnitChain {
@@ -122,16 +176,23 @@ where
 }
 
 fn parse_unit(str: &String) -> Result<Option<UnitChain>, String> {
-    let mut it = str.chars().peekable();
-    match it.peek() {
-        Some('/') => Ok(Some(parse_unit_chain(it)?)),
-        _ => Ok(None),
+    if str.is_empty() || !str.starts_with('/') {
+        return Ok(None);
     }
+    Ok(Some(parse_unit_chain(str)?))
 }
 
 struct CounterRule {
     pat: glob::Pattern,
     unit: Option<UnitChain>,
+}
+
+struct CounterHistory {
+    key: CounterKey,
+    history: Vec<u64>,
+    base: u64,
+    age: u32,
+    unit: UnitChain,
 }
 
 fn main() {
@@ -144,9 +205,13 @@ fn main() {
             println!("Usage: {} <if> <counter> [<counter> ...]", args[0]);
             std::process::exit(1);
         }
+        args.remove(0);
 
-        let arg1 = args.remove(1);
-        if let Ok(pat) = glob::Pattern::new(&arg1) {
+        // Add an implicit unit for any counters left without one.
+        args.push("/1".to_string());
+
+        let arg0 = args.remove(0);
+        if let Ok(pat) = glob::Pattern::new(&arg0) {
             ifmatch = pat;
         } else {
             println!("Interface match expected, e.g. 'eth0' or 'eth*'.");
@@ -214,24 +279,28 @@ fn main() {
             .iter()
             .filter(|ifname| ifmatch.matches(&ifname))
         {
-            for stat in ethtool_ss::stats_for(&ifname)
-                .iter()
-                .filter(|stat| rules.iter().any(|rule| rule.pat.matches(&stat.name)))
-            {
-                let key = CounterKey {
-                    ifname: ifname.clone(),
-                    ctns: "ethtool".to_string(),
-                    ctname: stat.name.clone(),
-                };
-                if let Some(elem) = state.iter_mut().find(|hist| hist.key == key) {
-                    elem.history.push(stat.value);
-                } else {
-                    state.push(CounterHistory {
-                        key: key,
-                        history: vec![stat.value],
-                        base: stat.value,
-                        age: 0,
-                    });
+            for stat in ethtool_ss::stats_for(&ifname).iter() {
+                for rule in &rules {
+                    if !rule.pat.matches(&stat.name) {
+                        continue;
+                    }
+                    let key = CounterKey {
+                        ifname: ifname.clone(),
+                        ctns: "ethtool".to_string(),
+                        ctname: stat.name.clone(),
+                    };
+                    if let Some(elem) = state.iter_mut().find(|hist| hist.key == key) {
+                        elem.history.push(stat.value);
+                    } else {
+                        state.push(CounterHistory {
+                            key: key,
+                            history: vec![stat.value],
+                            base: stat.value,
+                            age: 0,
+                            unit: rule.unit.as_ref().unwrap().clone(),
+                        });
+                    }
+                    break;
                 }
             }
         }
@@ -290,17 +359,35 @@ fn main() {
             let spot = (ma - ma1) as i32;
             let delta = (ma - entry.base as i64) as i32;
 
-            line_out(
-                if last_ifname != entry.key.ifname {
-                    &entry.key.ifname
-                } else {
-                    ""
-                },
-                &entry.key.ctname,
-                &humanize(delta, " "),
-                &humanize(spot, " "),
-                &humanize(avg, " "),
-            );
+            match entry.unit.freq {
+                UnitFrequency::AsIs => {}
+                UnitFrequency::Delta => {
+                    line_out(
+                        if last_ifname != entry.key.ifname {
+                            &entry.key.ifname
+                        } else {
+                            ""
+                        },
+                        &entry.key.ctname,
+                        &humanize(delta, " "),
+                        "",
+                        "",
+                    );
+                }
+                UnitFrequency::PerSecond => {
+                    line_out(
+                        if last_ifname != entry.key.ifname {
+                            &entry.key.ifname
+                        } else {
+                            ""
+                        },
+                        &entry.key.ctname,
+                        "",
+                        &humanize(spot, " "),
+                        &humanize(avg, " "),
+                    );
+                }
+            }
             last_ifname = &entry.key.ifname;
         }
         print!("\nOverhead {:?}", start.elapsed());
