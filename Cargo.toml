@@ -12,3 +12,4 @@ neli = { git = "https://github.com/jbaublitz/neli.git" }
 libc = "*"
 glob = "*"
 termion = "1"
+fixed = "0.5.*"

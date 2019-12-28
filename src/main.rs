@@ -1,3 +1,4 @@
+extern crate fixed;
 extern crate glob;
 extern crate termion;
 
@@ -9,6 +10,12 @@ use std::time;
 
 mod ethtool_ss;
 mod netlink;
+
+// Counters are generally 64-bit quantities. To support displaying deltas up to that resolution, we
+// need an extra bit. And then to represent fractional values based off a 64-bit quantity, we need
+// more bits for the fraction. To keep things simple, use a 128-bit fixpoint value split to 65 bits
+// interal part and 63 bits fractional.
+type CtVal = fixed::types::I65F63;
 
 #[derive(Eq, PartialEq)]
 struct CounterKey {
@@ -43,9 +50,12 @@ enum UnitPrefix {
     Kilo,
     Mega,
     Giga,
+    Tera,
+    Peta,
+    Exa,
 }
 
-static PREFIXES: [(UnitPrefix, char); 7] = [
+static PREFIXES: [(UnitPrefix, char); 10] = [
     (UnitPrefix::Nano, 'n'),
     (UnitPrefix::Micro, 'u'),
     (UnitPrefix::Milli, 'm'),
@@ -53,6 +63,9 @@ static PREFIXES: [(UnitPrefix, char); 7] = [
     (UnitPrefix::Kilo, 'K'),
     (UnitPrefix::Mega, 'M'),
     (UnitPrefix::Giga, 'G'),
+    (UnitPrefix::Tera, 'T'),
+    (UnitPrefix::Peta, 'P'),
+    (UnitPrefix::Exa, 'E'),
 ];
 
 #[derive(Clone)]
@@ -74,34 +87,30 @@ struct UnitChain {
     freq: UnitFrequency,
 }
 
-fn humanize(value: i32, base: UnitPrefix, unit_prefix_str: &str, unit_str: &String) -> String {
+fn humanize(
+    mut value: CtVal,
+    base: UnitPrefix,
+    unit_prefix_str: &str,
+    unit_str: &String,
+) -> String {
     let mut pos = PREFIXES.iter().position(|(unit, _)| *unit == base).unwrap();
-    let mut f = (value as f32).abs();
     let mut trivial = true;
 
-    while f >= 1100.0 && pos < PREFIXES.len() {
-        f /= 1000.0;
+    while value.abs() >= 1100 && (pos + 1) < PREFIXES.len() {
+        value /= 1000;
         pos += 1;
         trivial = false;
     }
 
     if trivial {
         format!(
-            "{}{}{:.0}    {}{}",
-            unit_prefix_str,
-            if value < 0 { "-" } else { "" },
-            f,
-            PREFIXES[pos].1,
-            &unit_str
+            "{}{:.0}    {}{}",
+            unit_prefix_str, value, PREFIXES[pos].1, &unit_str
         )
     } else {
         format!(
-            "{}{}{:.2} {}{}",
-            unit_prefix_str,
-            if value < 0 { "-" } else { "" },
-            f,
-            PREFIXES[pos].1,
-            &unit_str
+            "{}{:.2} {}{}",
+            unit_prefix_str, value, PREFIXES[pos].1, &unit_str
         )
     }
 }
@@ -376,23 +385,24 @@ fn main() {
 
         let mut last_ifname = "";
         for entry in &state {
-            let mi = *entry.history.first().unwrap() as i64;
-            let ma = *entry.history.last().unwrap() as i64;
+            let mi = *entry.history.first().unwrap();
+            let ma = *entry.history.last().unwrap();
             let ma1 = if entry.history.len() > 1 {
-                entry.history[entry.history.len() - 2] as i64
+                entry.history[entry.history.len() - 2]
             } else {
                 ma
             };
 
             let mut avg = None;
             let mut value = match entry.unit.freq {
-                UnitFrequency::AsIs => ma as i32,
-                UnitFrequency::Delta => (ma - entry.base as i64) as i32,
+                UnitFrequency::AsIs => CtVal::from_num(ma),
+                UnitFrequency::Delta => CtVal::from_num((ma - entry.base) as i64),
                 UnitFrequency::PerSecond => {
-                    let time = entry.history.len();
-                    let d1 = (ma - mi) as f32;
-                    avg = Some((d1 / (time as f32)) as i32);
-                    (ma - ma1) as i32
+                    if entry.history.len() == history_depth as usize {
+                        let d1 = ma - mi;
+                        avg = Some(CtVal::from_num(d1) / CtVal::from_num(avg_s));
+                    }
+                    CtVal::from_num(1000 * (ma - ma1) / (cycle_ms as u64))
                 }
             };
 
@@ -403,9 +413,11 @@ fn main() {
                     (None, _) => {}
                     (Some(UnitBase::Bytes), UnitBase::Bits) => {
                         value *= 8;
+                        avg = avg.map(|avalue| avalue * 8);
                     }
                     (Some(UnitBase::Bits), UnitBase::Bytes) => {
                         value /= 8;
+                        avg = avg.map(|avalue| avalue / 8);
                     }
                     _ => {}
                 }
