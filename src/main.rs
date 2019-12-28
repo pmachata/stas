@@ -17,36 +17,7 @@ struct CounterKey {
     ctname: String,
 }
 
-fn humanize(value: i32, base: &str) -> String {
-    let units = vec!["p", "n", "u", "m", " ", "K", "M", "G", "T", "P"];
-    let mut unit = units.iter().position(|u| *u == base).unwrap();
-    let mut f = (value as f32).abs();
-    let mut trivial = true;
-
-    while f > 1000.0 && unit < units.len() {
-        f /= 1000.0;
-        unit += 1;
-        trivial = false;
-    }
-
-    if trivial {
-        format!(
-            "{}{:.0}   {}",
-            if value < 0 { "-" } else { "" },
-            f,
-            units[unit]
-        )
-    } else {
-        format!(
-            "{}{:.2}{}",
-            if value < 0 { "-" } else { "" },
-            f,
-            units[unit]
-        )
-    }
-}
-
-#[derive(Clone)]
+#[derive(Clone, Copy, PartialEq)]
 enum UnitBase {
     Units,
     Packets,
@@ -55,9 +26,38 @@ enum UnitBase {
     Bytes,
 }
 
+static UNITS: [(UnitBase, char); 5] = [
+    (UnitBase::Units, '1'),
+    (UnitBase::Packets, 'p'),
+    (UnitBase::Seconds, 's'),
+    (UnitBase::Bits, 'b'),
+    (UnitBase::Bytes, 'B'),
+];
+
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum UnitPrefix {
+    Nano,
+    Micro,
+    Milli,
+    None,
+    Kilo,
+    Mega,
+    Giga,
+}
+
+static PREFIXES: [(UnitPrefix, char); 7] = [
+    (UnitPrefix::Nano, 'n'),
+    (UnitPrefix::Micro, 'u'),
+    (UnitPrefix::Milli, 'm'),
+    (UnitPrefix::None, ' '),
+    (UnitPrefix::Kilo, 'K'),
+    (UnitPrefix::Mega, 'M'),
+    (UnitPrefix::Giga, 'G'),
+];
+
 #[derive(Clone)]
-struct UnitPrefix {
-    power: i32,
+struct Unit {
+    prefix: UnitPrefix,
     unit: UnitBase,
 }
 
@@ -70,40 +70,72 @@ enum UnitFrequency {
 
 #[derive(Clone)]
 struct UnitChain {
-    units: Vec<UnitPrefix>,
+    units: Vec<Unit>,
     freq: UnitFrequency,
 }
 
-fn parse_unit_pfx<I>(it: &mut Peekable<I>) -> Result<UnitPrefix, String>
+fn humanize(value: i32, base: UnitPrefix, unit_prefix_str: &str, unit_str: &String) -> String {
+    let mut pos = PREFIXES.iter().position(|(unit, _)| *unit == base).unwrap();
+    let mut f = (value as f32).abs();
+    let mut trivial = true;
+
+    while f >= 1100.0 && pos < PREFIXES.len() {
+        f /= 1000.0;
+        pos += 1;
+        trivial = false;
+    }
+
+    if trivial {
+        format!(
+            "{}{}{:.0}    {}{}",
+            unit_prefix_str,
+            if value < 0 { "-" } else { "" },
+            f,
+            PREFIXES[pos].1,
+            &unit_str
+        )
+    } else {
+        format!(
+            "{}{}{:.2} {}{}",
+            unit_prefix_str,
+            if value < 0 { "-" } else { "" },
+            f,
+            PREFIXES[pos].1,
+            &unit_str
+        )
+    }
+}
+
+fn parse_unit_pfx<I>(it: &mut Peekable<I>) -> Result<Unit, String>
 where
     I: Iterator<Item = char>,
 {
-    let power = match it.peek() {
+    let prefix = match it.peek() {
         Some(&'G') => {
             it.next();
-            9
+            UnitPrefix::Giga
         }
         Some(&'M') => {
             it.next();
-            6
+            UnitPrefix::Mega
         }
         Some(&'k') | Some(&'K') => {
             it.next();
-            3
+            UnitPrefix::Kilo
         }
         Some(&'m') => {
             it.next();
-            -3
+            UnitPrefix::Milli
         }
         Some(&'u') => {
             it.next();
-            -6
+            UnitPrefix::Micro
         }
         Some(&'n') => {
             it.next();
-            -9
+            UnitPrefix::Nano
         }
-        _ => 0,
+        _ => UnitPrefix::None,
     };
 
     let unit = match it.next() {
@@ -120,13 +152,13 @@ where
         }
     };
 
-    Ok(UnitPrefix {
-        power: power,
+    Ok(Unit {
+        prefix: prefix,
         unit: unit,
     })
 }
 
-fn parse_unit_freq(str: &str) -> Result<(UnitPrefix, UnitFrequency), String> {
+fn parse_unit_freq(str: &str) -> Result<(Unit, UnitFrequency), String> {
     let mut freq: Option<UnitFrequency> = None;
     let mut it = str.chars().peekable();
 
@@ -154,7 +186,7 @@ fn parse_unit_freq(str: &str) -> Result<(UnitPrefix, UnitFrequency), String> {
 }
 
 fn parse_unit_chain(str: &str) -> Result<UnitChain, String> {
-    let mut units = Vec::<UnitPrefix>::new();
+    let mut units = Vec::<Unit>::new();
     let mut freq = UnitFrequency::AsIs;
 
     // The unit string starts with a '/', so skip the first (empty) element.
@@ -308,7 +340,7 @@ fn main() {
         print!("{}", termion::clear::All);
         let mut line = 1;
 
-        let headers = vec!["iface", "counter", "delta", "spot", avg_s_str];
+        let headers = vec!["iface", "counter", "value", avg_s_str];
 
         let ifname_col_w = state
             .iter()
@@ -323,15 +355,14 @@ fn main() {
             .max()
             .unwrap();
 
-        let mut line_out = |ifname: &str, ctname: &str, delta: &str, spot: &str, avg: &str| {
+        let mut line_out = |ifname: &str, ctname: &str, value: &str, avg: &str| {
             print!(
-                "{}{}| {: <ifname_col_w$} | {: <ctname_col_w$} | {: >10} | {: >10} | {: >10} |",
+                "{}{}| {: <ifname_col_w$} | {: <ctname_col_w$} | {: >14} | {: >14} |",
                 termion::cursor::Goto(1, line as u16),
                 termion::clear::CurrentLine,
                 ifname,
                 ctname,
-                delta,
-                spot,
+                value,
                 avg,
                 ifname_col_w = ifname_col_w,
                 ctname_col_w = ctname_col_w
@@ -340,7 +371,7 @@ fn main() {
         };
 
         print!("{}{}", termion::style::Invert, termion::style::Bold);
-        line_out(headers[0], headers[1], headers[2], headers[3], headers[4]);
+        line_out(headers[0], headers[1], headers[2], headers[3]);
         print!("{}", termion::style::Reset);
 
         let mut last_ifname = "";
@@ -353,41 +384,73 @@ fn main() {
                 ma
             };
 
-            let time = entry.history.len();
-            let d1 = (ma - mi) as f32;
-            let avg = (d1 / (time as f32)) as i32;
-            let spot = (ma - ma1) as i32;
-            let delta = (ma - entry.base as i64) as i32;
-
-            match entry.unit.freq {
-                UnitFrequency::AsIs => {}
-                UnitFrequency::Delta => {
-                    line_out(
-                        if last_ifname != entry.key.ifname {
-                            &entry.key.ifname
-                        } else {
-                            ""
-                        },
-                        &entry.key.ctname,
-                        &humanize(delta, " "),
-                        "",
-                        "",
-                    );
-                }
+            let mut avg = None;
+            let mut value = match entry.unit.freq {
+                UnitFrequency::AsIs => ma as i32,
+                UnitFrequency::Delta => (ma - entry.base as i64) as i32,
                 UnitFrequency::PerSecond => {
-                    line_out(
-                        if last_ifname != entry.key.ifname {
-                            &entry.key.ifname
-                        } else {
-                            ""
-                        },
-                        &entry.key.ctname,
-                        "",
-                        &humanize(spot, " "),
-                        &humanize(avg, " "),
-                    );
+                    let time = entry.history.len();
+                    let d1 = (ma - mi) as f32;
+                    avg = Some((d1 / (time as f32)) as i32);
+                    (ma - ma1) as i32
                 }
+            };
+
+            let mut prev_unit = None;
+            let mut prefix = None;
+            for unit in &entry.unit.units {
+                match (prev_unit, unit.unit) {
+                    (None, _) => {}
+                    (Some(UnitBase::Bytes), UnitBase::Bits) => {
+                        value *= 8;
+                    }
+                    (Some(UnitBase::Bits), UnitBase::Bytes) => {
+                        value /= 8;
+                    }
+                    _ => {}
+                }
+                if prefix.is_none() {
+                    prefix = Some(unit.prefix);
+                }
+                prev_unit = Some(unit.unit);
             }
+
+            let unit_str = UNITS
+                .iter()
+                .find_map(|&(unit, letter)| {
+                    if unit == prev_unit.unwrap() {
+                        Some(letter)
+                    } else {
+                        None
+                    }
+                })
+                .unwrap()
+                .to_string()
+                + match entry.unit.freq {
+                    UnitFrequency::AsIs => "  ",
+                    UnitFrequency::Delta => "  ",
+                    UnitFrequency::PerSecond => "ps",
+                };
+            let unit_prefix_str = match entry.unit.freq {
+                UnitFrequency::AsIs => " ",
+                UnitFrequency::Delta => "\u{0394}",
+                UnitFrequency::PerSecond => " ",
+            };
+
+            line_out(
+                if last_ifname != entry.key.ifname {
+                    &entry.key.ifname
+                } else {
+                    ""
+                },
+                &entry.key.ctname,
+                &humanize(value, prefix.unwrap(), &unit_prefix_str, &unit_str),
+                &if avg.is_some() {
+                    humanize(avg.unwrap(), prefix.unwrap(), &unit_prefix_str, &unit_str)
+                } else {
+                    "-     ".to_string()
+                },
+            );
             last_ifname = &entry.key.ifname;
         }
         print!("\nOverhead {:?}", start.elapsed());
