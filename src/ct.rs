@@ -9,7 +9,7 @@ use std::iter::Peekable;
 // interal part and 63 bits fractional.
 pub type Value = fixed::types::I65F63;
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, PartialEq, Debug)]
 pub enum UBase {
     Units,
     Packets,
@@ -37,7 +37,7 @@ impl std::string::ToString for UBase {
     }
 }
 
-#[derive(Clone, Copy, Eq, PartialEq)]
+#[derive(Clone, Copy, Eq, PartialEq, Debug)]
 pub enum UPfx {
     Nano,
     Micro,
@@ -64,20 +64,20 @@ static PREFIXES: [(UPfx, char); 10] = [
     (UPfx::Exa, 'E'),
 ];
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Unit {
     pub prefix: UPfx,
     pub base: UBase,
 }
 
-#[derive(PartialEq, Clone)]
+#[derive(PartialEq, Clone, Debug)]
 pub enum UFreq {
     AsIs,
     Delta,
     PerSecond,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct UnitChain {
     pub units: Vec<Unit>,
     pub freq: UFreq,
@@ -214,6 +214,7 @@ pub fn parse_unit(str: &String) -> Result<Option<UnitChain>, String> {
     Ok(Some(parse_unit_chain(str)?))
 }
 
+// xxx temporary -- will be replaced by a trait
 pub struct CounterRule {
     pub pat: glob::Pattern,
     pub unit: Option<UnitChain>,

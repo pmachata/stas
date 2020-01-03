@@ -83,16 +83,18 @@
 
 - counters:
   - it looks like we can make do without parentheses
-  - ethtool: tx_*                       # ethtool counters starting with tx_
-  - ethtool: tx_bytes tx_packets        # these two ethtool counters
-  - qdisc: 1: bytes                     # the qdisc itself
-  - qdisc: ingress bytes                # ingress clsact qdisc
-  - qdisc: egress bytes                 # egress clsact qdisc
-  - qdisc: 1:1 bytes                    # a class
-  - qdisc: 1:* bytes                    # all classes
-  - qdisc: 1:1 1:2 1:3 bytes            # these classes
-  - qdisc: 1:1 1:2 bytes drops          # these counters under these classes
-  - action: [a:b|ingress|egress] [protocol x] [pref y] [chain z] [handle h] [action a] counter
+  - ethtool: @if tx_*                   # ethtool counters starting with tx_
+  - ethtool: @if1 @if2 tx_*             # the same, on these two interfaces
+  - ethtool: @if tx_bytes tx_packets    # these two ethtool counters
+  - ethtool: @if1 tx_* @if2 rx_         # ethtool applies to the whole recipe
+  - qdisc: @if 1: bytes                 # the qdisc itself
+  - qdisc: @if ingress bytes            # ingress clsact qdisc
+  - qdisc: @if egress bytes             # egress clsact qdisc
+  - qdisc: @if 1:1 bytes                # a class
+  - qdisc: @if 1:* bytes                # all classes
+  - qdisc: @if 1:1 1:2 1:3 bytes        # these classes
+  - qdisc: @if 1:1 1:2 bytes drops      # these counters under these classes
+  - action: @if [a:b|ingress|egress] [protocol x] [pref y] [chain z] [handle h] [action a] counter
     - filters are messy. It looks like we will need to use keywords to annotate
       what's what. Then "bytes" and "packets" (or just a glob, or mentioning
       several would work as well) would terminate the selector.
@@ -105,13 +107,13 @@
         both? But no, that would make it harder to copy stuff over from tc.
     - action specifies action order (order of action within the filter). Default
       is * (all actions)
-  - action: ingress handle 0x123 bytes packets  # protocol all, chain 0, these two counters
-  - action: ingress pref 1000 *         # prot all, chain 0, pref 1000, all counters
-  - action: 1: bytes                    # all actions on 1:, bytes
-  - action: bytes                       # all actions on all qdiscs, bytes
-  - action: 1: chain * handle 0x123 bytes # this handle on all chains
-  - action: 1:1 1:2 chain 0 1 2 handle 0x123 0x234 bytes # each keyword can have many arguments
-  - action: \( chain 1 handle 0x123 \) \( chain 2 handle 0x234 \) bytes
+  - action: @if ingress handle 0x123 bytes packets  # protocol all, chain 0, these two counters
+  - action: @if ingress pref 1000 *      # prot all, chain 0, pref 1000, all counters
+  - action: @if 1: bytes                 # all actions on 1:, bytes
+  - action: @if bytes                    # all actions on all qdiscs, bytes
+  - action: @if 1: chain * handle 0x123 bytes # this handle on all chains
+  - action: @if 1:1 1:2 chain 0 1 2 handle 0x123 0x234 bytes # each keyword can have many arguments
+  - action: @if \( chain 1 handle 0x123 \) \( chain 2 handle 0x234 \) bytes
 
 - Expr ::= [Namespace:] CounterExpr [CounterExpr ...]
 - CounterExpr ::= IfnameMatch CounterMatchGrp
