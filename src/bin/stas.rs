@@ -166,9 +166,9 @@ fn main() {
                     ""
                 },
                 &entry.key.ctname,
-                &stas::humanize(value, unit.prefix, &unit_prefix_str, &unit_str),
+                &stas::humanize(value, unit.prefix, &unit_prefix_str, &unit_str, false),
                 &if avg.is_some() {
-                    stas::humanize(avg.unwrap(), unit.prefix, &unit_prefix_str, &unit_str)
+                    stas::humanize(avg.unwrap(), unit.prefix, &unit_prefix_str, &unit_str, true)
                 } else {
                     "-     ".to_string()
                 },

@@ -81,9 +81,15 @@ pub struct UnitChain {
     pub freq: UFreq,
 }
 
-pub fn humanize(mut value: Value, base: UPfx, unit_prefix_str: &str, unit_str: &String) -> String {
+pub fn humanize(
+    mut value: Value,
+    base: UPfx,
+    unit_prefix_str: &str,
+    unit_str: &String,
+    always_decimal: bool,
+) -> String {
     let mut pos = PREFIXES.iter().position(|(unit, _)| *unit == base).unwrap();
-    let mut trivial = true;
+    let mut trivial = !always_decimal;
 
     while value.abs() >= 1100 && (pos + 1) < PREFIXES.len() {
         value /= 1000;
