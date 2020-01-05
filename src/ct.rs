@@ -110,10 +110,9 @@ pub fn humanize(
     }
 }
 
-// xxx this is very ethtool-centric, will need to be generalized
 #[derive(Eq, PartialEq)]
 pub struct CounterKey {
-    pub ctns: String,
+    pub ctns: &'static str,
     pub ifname: String,
     pub ctname: String,
 }

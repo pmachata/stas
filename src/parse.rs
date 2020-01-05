@@ -225,7 +225,7 @@ impl ct::CounterRule for EthtoolCounterRule {
                     if ctmatch.pat.matches(&stat.name) {
                         ret.push(ct::CounterImm {
                             key: ct::CounterKey {
-                                ctns: "ethtool".to_string(),
+                                ctns: "ethtool",
                                 ifname: ifname.clone(),
                                 ctname: stat.name.clone(),
                             },
