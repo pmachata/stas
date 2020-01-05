@@ -134,13 +134,14 @@ fn main() {
             let mut avg = None;
             let value = match entry.unit.freq {
                 stas::UFreq::AsIs => stas::Value::from_num(ma),
-                stas::UFreq::Delta => stas::Value::from_num((ma - entry.base) as i64),
+                stas::UFreq::Delta => stas::Value::from_num(ma) - stas::Value::from_num(entry.base),
                 stas::UFreq::PerSecond => {
                     if entry.history.len() == history_depth as usize {
-                        let d1 = ma - mi;
-                        avg = Some(stas::Value::from_num(d1) / stas::Value::from_num(avg_s));
+                        let d1 = stas::Value::from_num(ma) - stas::Value::from_num(mi);
+                        avg = Some(d1 / stas::Value::from_num(avg_s));
                     }
-                    stas::Value::from_num(1000 * (ma - ma1) / (cycle_ms as u64))
+                    1000 * (stas::Value::from_num(ma) - stas::Value::from_num(ma1))
+                        / stas::Value::from_num(cycle_ms)
                 }
             };
 
