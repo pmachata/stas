@@ -1,8 +1,6 @@
 extern crate fixed;
 extern crate glob;
 
-use std::iter::Peekable;
-
 // Counters are generally 64-bit quantities. To support displaying deltas up to that resolution, we
 // need an extra bit. And then to represent fractional values based off a 64-bit quantity, we need
 // more bits for the fraction. To keep things simple, use a 128-bit fixpoint value split to 65 bits
@@ -106,118 +104,23 @@ pub fn humanize(mut value: Value, base: UPfx, unit_prefix_str: &str, unit_str: &
     }
 }
 
-fn parse_unit_pfx<I>(it: &mut Peekable<I>) -> Result<Unit, String>
-where
-    I: Iterator<Item = char>,
-{
-    let prefix = match it.peek() {
-        Some(&'G') => {
-            it.next();
-            UPfx::Giga
-        }
-        Some(&'M') => {
-            it.next();
-            UPfx::Mega
-        }
-        Some(&'k') | Some(&'K') => {
-            it.next();
-            UPfx::Kilo
-        }
-        Some(&'m') => {
-            it.next();
-            UPfx::Milli
-        }
-        Some(&'u') => {
-            it.next();
-            UPfx::Micro
-        }
-        Some(&'n') => {
-            it.next();
-            UPfx::Nano
-        }
-        _ => UPfx::None,
-    };
-
-    let base = match it.next() {
-        Some('p') => UBase::Packets,
-        Some('s') => UBase::Seconds,
-        Some('B') => UBase::Bytes,
-        Some('b') => UBase::Bits,
-        Some('1') => UBase::Units,
-        Some(c) => {
-            return Err(format!("Unknown unit, '{}'", c));
-        }
-        _ => {
-            return Err("Missing unit".to_string());
-        }
-    };
-
-    Ok(Unit {
-        prefix: prefix,
-        base: base,
-    })
+// xxx this is very ethtool-centric, will need to be generalized
+#[derive(Eq, PartialEq)]
+pub struct CounterKey {
+    pub ctns: String,
+    pub ifname: String,
+    pub ctname: String,
 }
 
-fn parse_unit_freq(str: &str) -> Result<(Unit, UFreq), String> {
-    let mut freq: Option<UFreq> = None;
-    let mut it = str.chars().peekable();
-
-    if it.peek() == Some(&'d') {
-        it.next();
-        freq = Some(UFreq::Delta);
-    }
-
-    let pfx = parse_unit_pfx(&mut it)?;
-
-    let rest = it.collect::<String>();
-    if rest.is_empty() {
-        return Ok((pfx, freq.unwrap_or(UFreq::AsIs)));
-    }
-
-    if freq.is_some() {
-        return Err(format!("Unit suffix not expected: {}", rest));
-    }
-
-    if rest == "ps" {
-        return Ok((pfx, UFreq::PerSecond));
-    }
-
-    return Err(format!("Unit suffix not understood: {}", rest));
+pub struct CounterImm {
+    pub key: CounterKey,
+    pub value: u64,
+    pub unit: UnitChain,
 }
 
-fn parse_unit_chain(str: &str) -> Result<UnitChain, String> {
-    let mut units = Vec::<Unit>::new();
-    let mut freq = UFreq::AsIs;
-
-    // The unit string starts with a '/', so skip the first (empty) element.
-    for substr in str.split('/').skip(1) {
-        let (unit, this_freq) = parse_unit_freq(substr)?;
-        if this_freq != UFreq::AsIs {
-            if freq != UFreq::AsIs {
-                return Err("Only one frequency allowed in a unit chain.".to_string());
-            }
-            freq = this_freq;
-        }
-        units.push(unit);
-    }
-
-    Ok(UnitChain {
-        units: units,
-        freq: freq,
-    })
-}
-
-pub fn parse_unit(str: &String) -> Result<Option<UnitChain>, String> {
-    if str.is_empty() || !str.starts_with('/') {
-        return Ok(None);
-    }
-    Ok(Some(parse_unit_chain(str)?))
-}
-
-// xxx temporary -- will be replaced by a trait
-pub struct CounterRule {
-    pub pat: glob::Pattern,
-    pub unit: Option<UnitChain>,
+pub trait CounterRule {
+    fn counters(&self) -> Result<Vec<CounterImm>, String>;
+    fn fmt(&self) -> String;
 }
 
 pub fn convert(

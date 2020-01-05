@@ -8,15 +8,8 @@ use std::io::{stdout, Write};
 use std::thread;
 use std::time;
 
-#[derive(Eq, PartialEq)]
-struct CounterKey {
-    ifname: String,
-    ctns: String,
-    ctname: String,
-}
-
 struct CounterHistory {
-    key: CounterKey,
+    key: stas::CounterKey,
     history: Vec<u64>,
     base: u64,
     age: u32,
@@ -24,8 +17,7 @@ struct CounterHistory {
 }
 
 fn main() {
-    let ifmatch: glob::Pattern;
-    let rules: Vec<stas::CounterRule>;
+    let rules;
 
     {
         let mut args: Vec<String> = env::args().collect();
@@ -35,48 +27,13 @@ fn main() {
         }
         args.remove(0);
 
-        // Add an implicit unit for any counters left without one.
-        args.push("/1".to_string());
-
-        let arg0 = args.remove(0);
-        if let Ok(pat) = glob::Pattern::new(&arg0) {
-            ifmatch = pat;
-        } else {
-            println!("Interface match expected, e.g. 'eth0' or 'eth*'.");
-            std::process::exit(1);
-        }
-
-        let mut _rules = Vec::<stas::CounterRule>::new();
-        for arg in args {
-            match stas::parse_unit(&arg) {
-                Ok(Some(_unit_chain)) => {
-                    for rule in _rules.iter_mut().rev() {
-                        if rule.unit.is_none() {
-                            rule.unit = Some(_unit_chain.clone());
-                        } else {
-                            break;
-                        }
-                    }
-                    continue;
-                }
-                Err(e) => {
-                    println!("Error parsing {}: {}", arg, e);
-                    return;
-                }
-                Ok(None) => {}
-            }
-
-            if let Ok(pat) = glob::Pattern::new(&arg) {
-                _rules.push(stas::CounterRule {
-                    pat: pat,
-                    unit: None,
-                });
-            } else {
-                println!("Counter match expected, e.g. 'tx_bytes' or 'tx_*'.");
+        match stas::parse_expr(&mut args.iter().peekable()) {
+            Ok(r) => rules = r,
+            Err(e) => {
+                println!("Error: {}", e);
                 std::process::exit(1);
             }
         }
-        rules = _rules;
     }
 
     let cycle_ms = 500;
@@ -103,32 +60,26 @@ fn main() {
             .filter(|entry| !entry.history.is_empty())
             .collect();
 
-        for ifname in stas::ifnames()
-            .iter()
-            .filter(|ifname| ifmatch.matches(&ifname))
-        {
-            for stat in stas::stats_for(&ifname).iter() {
-                for rule in &rules {
-                    if !rule.pat.matches(&stat.name) {
-                        continue;
+        for rule in &rules {
+            match rule.counters() {
+                Ok(imms) => {
+                    for imm in imms {
+                        if let Some(elem) = state.iter_mut().find(|hist| hist.key == imm.key) {
+                            elem.history.push(imm.value);
+                        } else {
+                            state.push(CounterHistory {
+                                key: imm.key,
+                                history: vec![imm.value],
+                                base: imm.value,
+                                age: 0,
+                                unit: imm.unit,
+                            });
+                        }
                     }
-                    let key = CounterKey {
-                        ifname: ifname.clone(),
-                        ctns: "ethtool".to_string(),
-                        ctname: stat.name.clone(),
-                    };
-                    if let Some(elem) = state.iter_mut().find(|hist| hist.key == key) {
-                        elem.history.push(stat.value);
-                    } else {
-                        state.push(CounterHistory {
-                            key: key,
-                            history: vec![stat.value],
-                            base: stat.value,
-                            age: 0,
-                            unit: rule.unit.as_ref().unwrap().clone(),
-                        });
-                    }
-                    break;
+                }
+                Err(err) => {
+                    println!("Error when obtaining counter values: {}", err);
+                    return;
                 }
             }
         }
