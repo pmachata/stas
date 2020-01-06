@@ -21,8 +21,11 @@ fn main() {
 
     {
         let mut args: Vec<String> = env::args().collect();
-        if args.len() <= 2 {
-            println!("Usage: {} <if> <counter> [<counter> ...]", args[0]);
+        if args.len() <= 1 {
+            println!(
+                "Usage: {} [ethtool:] @eth* @ens* [...] tx_* rx_* /B/bps",
+                args[0]
+            );
             std::process::exit(1);
         }
         args.remove(0);
