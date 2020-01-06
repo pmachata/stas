@@ -44,7 +44,9 @@ fn main() {
     let history_depth = 1000 * avg_s / cycle_ms;
     let avg_s_str = &format!("{}s avg", avg_s);
 
+    print!("{}", termion::clear::All);
     let mut state = Vec::<CounterHistory>::new();
+    let mut nlines = 0;
     loop {
         let start = std::time::Instant::now();
 
@@ -87,7 +89,7 @@ fn main() {
             }
         }
 
-        print!("{}", termion::clear::All);
+        print!("{}", termion::cursor::Goto(1, 1));
         let mut line = 1;
 
         let headers = vec!["iface", "counter", "value", avg_s_str];
@@ -178,7 +180,15 @@ fn main() {
             );
             last_ifname = &entry.key.ifname;
         }
-        print!("\nOverhead {:?}", start.elapsed());
+        print!(
+            "\n{}Overhead {:?}",
+            termion::clear::CurrentLine,
+            start.elapsed()
+        );
+        for _ in line..nlines {
+            print!("\n{}", termion::clear::CurrentLine);
+        }
+        nlines = line;
         stdout().flush().unwrap();
 
         thread::sleep(time::Duration::from_millis(cycle_ms as u64) - start.elapsed());
