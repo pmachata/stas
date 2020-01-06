@@ -332,11 +332,19 @@ const PARSERS: [(&str, &dyn Parser); 1] = [("ethtool", &EthtoolParser {})];
 pub fn parse_expr(
     words: &mut Peekable<std::slice::Iter<String>>,
 ) -> Result<Vec<Box<dyn ct::CounterRule>>, String> {
-    let ns = parse_ns_opt(words).unwrap_or("ethtool".to_string());
-    PARSERS
-        .iter()
-        .find(|(name, _)| *name == ns)
-        .ok_or(format!("Unknown namespace: {}", ns))?
-        .1
-        .parse(words)
+    let mut ret = Vec::new();
+    loop {
+        let ns = parse_ns_opt(words).unwrap_or("ethtool".to_string());
+        let mut nv = PARSERS
+            .iter()
+            .find(|(name, _)| *name == ns)
+            .ok_or(format!("Unknown namespace: {}", ns))?
+            .1
+            .parse(words)?;
+        if nv.is_empty() {
+            break;
+        }
+        ret.append(&mut nv);
+    }
+    Ok(ret)
 }
