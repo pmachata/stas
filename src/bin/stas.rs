@@ -11,6 +11,8 @@ use std::time;
 struct CounterHistory {
     key: stas::CounterKey,
     history: Vec<u64>,
+    curr: Option<u64>,
+    prev: Option<u64>,
     base: u64,
     age: u32,
     unit: stas::UnitChain,
@@ -53,16 +55,21 @@ fn main() {
         // Trim the history at history_depth.
         for entry in &mut state {
             entry.age += 1;
-            if entry.age >= history_depth {
+            if let Some(prev) = entry.prev {
+                entry.history.push(prev);
+            }
+            if !entry.history.is_empty() && entry.age > history_depth {
                 entry.history.remove(0);
             }
+            entry.prev = entry.curr;
+            entry.curr = None;
         }
 
         // Counters that disappeared (e.g. due to their interface having disappeared) will
         // eventually run out of history items. Drop them.
         state = state
             .drain(..)
-            .filter(|entry| !entry.history.is_empty())
+            .filter(|entry| !(entry.history.is_empty() && entry.prev.is_none()))
             .collect();
 
         for rule in &rules {
@@ -70,12 +77,14 @@ fn main() {
                 Ok(imms) => {
                     for imm in imms {
                         if let Some(elem) = state.iter_mut().find(|hist| hist.key == imm.key) {
-                            elem.history.push(imm.value);
+                            elem.curr = Some(imm.value);
                         } else {
                             state.push(CounterHistory {
                                 key: imm.key,
-                                history: vec![imm.value],
+                                history: vec![],
                                 base: imm.value,
+                                curr: Some(imm.value),
+                                prev: None,
                                 age: 0,
                                 unit: imm.unit,
                             });
@@ -127,27 +136,30 @@ fn main() {
         print!("{}", termion::style::Reset);
 
         let mut last_ifname = "";
+        // -1 for the first tick, which does not go into history.
         for entry in &state {
-            let mi = *entry.history.first().unwrap();
-            let ma = *entry.history.last().unwrap();
-            let ma1 = if entry.history.len() > 1 {
-                entry.history[entry.history.len() - 2]
-            } else {
-                ma
-            };
+            let avg =
+                if (entry.history.len() >= (history_depth - 1) as usize) && entry.curr.is_some() {
+                    let mi = *entry.history.first().unwrap();
+                    let ma = entry.curr.unwrap();
+                    let d1 = stas::Value::from_num(ma) - stas::Value::from_num(mi);
+                    Some(d1 / stas::Value::from_num(avg_s))
+                } else {
+                    None
+                };
 
-            let mut avg = None;
             let value = match entry.unit.freq {
-                stas::UFreq::AsIs => stas::Value::from_num(ma),
-                stas::UFreq::Delta => stas::Value::from_num(ma) - stas::Value::from_num(entry.base),
-                stas::UFreq::PerSecond => {
-                    if entry.history.len() == history_depth as usize {
-                        let d1 = stas::Value::from_num(ma) - stas::Value::from_num(mi);
-                        avg = Some(d1 / stas::Value::from_num(avg_s));
-                    }
-                    1000 * (stas::Value::from_num(ma) - stas::Value::from_num(ma1))
-                        / stas::Value::from_num(cycle_ms)
-                }
+                stas::UFreq::AsIs => entry.curr.map(|v| stas::Value::from_num(v)),
+                stas::UFreq::Delta => entry
+                    .curr
+                    .map(|v| stas::Value::from_num(v) - stas::Value::from_num(entry.base)),
+                stas::UFreq::PerSecond => match (entry.prev, entry.curr) {
+                    (Some(prev), Some(curr)) => Some(
+                        1000 * (stas::Value::from_num(curr) - stas::Value::from_num(prev))
+                            / stas::Value::from_num(cycle_ms),
+                    ),
+                    (_, _) => None,
+                },
             };
 
             let (value, avg, unit) = stas::convert(&entry.unit, value, avg);
@@ -171,7 +183,17 @@ fn main() {
                     ""
                 },
                 &entry.key.ctname,
-                &stas::humanize(value, unit.prefix, &unit_prefix_str, &unit_str, false),
+                &if value.is_some() {
+                    stas::humanize(
+                        value.unwrap(),
+                        unit.prefix,
+                        &unit_prefix_str,
+                        &unit_str,
+                        false,
+                    )
+                } else {
+                    "-     ".to_string()
+                },
                 &if avg.is_some() {
                     stas::humanize(avg.unwrap(), unit.prefix, &unit_prefix_str, &unit_str, true)
                 } else {

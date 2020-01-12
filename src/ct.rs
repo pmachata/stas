@@ -130,9 +130,9 @@ pub trait CounterRule {
 
 pub fn convert(
     uchain: &UnitChain,
-    value: Value,
+    value: Option<Value>,
     avg: Option<Value>,
-) -> (Value, Option<Value>, Unit) {
+) -> (Option<Value>, Option<Value>, Unit) {
     assert!(!uchain.units.is_empty());
 
     let mut it = uchain.units.iter();
@@ -144,12 +144,12 @@ pub fn convert(
     for unit in it {
         match (prev_unit.base, unit.base) {
             (UBase::Bytes, UBase::Bits) => {
-                ret_value *= 8;
-                ret_avg = ret_avg.map(|avalue| avalue * 8);
+                ret_value = ret_value.map(|v| v * 8);
+                ret_avg = ret_avg.map(|av| av * 8);
             }
             (UBase::Bits, UBase::Bytes) => {
-                ret_value /= 8;
-                ret_avg = avg.map(|avalue| avalue / 8);
+                ret_value = ret_value.map(|v| v / 8);
+                ret_avg = avg.map(|av| av / 8);
             }
             _ => {}
         }
