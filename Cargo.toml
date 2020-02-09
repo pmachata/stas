@@ -10,7 +10,7 @@ path = "src/lib.rs"
 
 [dependencies]
 nix = "*"
-neli = { git = "https://github.com/jbaublitz/neli.git" }
+neli = { git = "https://github.com/pmachata/neli.git" }
 libc = "*"
 glob = "*"
 termion = "1"

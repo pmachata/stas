@@ -46,7 +46,7 @@ fn main() {
     let history_depth = 1000 * avg_s / cycle_ms;
     let avg_s_str = &format!("{}s avg", avg_s);
 
-    print!("{}", termion::clear::All);
+    //print!("{}", termion::clear::All);
     let mut state = Vec::<CounterHistory>::new();
     let mut nlines = 0;
     loop {

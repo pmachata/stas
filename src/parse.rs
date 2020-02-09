@@ -204,13 +204,83 @@ fn parse_unit(
 }
 
 #[derive(Debug)]
-struct EthtoolCounterMatch {
+enum QdiscHandlePartMatch {
+    Any,        // Wildcard, currently only used for minor
+    None,       // Omitted, only makes sense for minor
+    Value(u16), // A particular value
+}
+#[derive(Debug)]
+struct QdiscHandleMatch {
+    major: QdiscHandlePartMatch,
+    minor: QdiscHandlePartMatch,
+}
+
+fn parse_hnmatch_one(word: &String) -> Option<QdiscHandleMatch> {
+    let mut iter = word.chars();
+    let major: String;
+    if let Some(pos) = word.chars().position(|ch| !ch.is_digit(16)) {
+        if pos == 0 {
+            return None;
+        }
+        major = iter.by_ref().take(pos).collect();
+    } else {
+        return None;
+    }
+
+    match iter.next() {
+        None => return None,
+        Some(ch) => {
+            if ch != ':' {
+                return None;
+            }
+        }
+    }
+    let minor: String = iter.collect();
+    if minor.is_empty() {
+        return Some(QdiscHandleMatch {
+            major: QdiscHandlePartMatch::Value(u16::from_str_radix(&major, 16).unwrap()),
+            minor: QdiscHandlePartMatch::None,
+        });
+    } else if minor == "*" {
+        return Some(QdiscHandleMatch {
+            major: QdiscHandlePartMatch::Value(u16::from_str_radix(&major, 16).unwrap()),
+            minor: QdiscHandlePartMatch::Any,
+        });
+    } else if minor.chars().all(|ch| ch.is_digit(16)) {
+        return Some(QdiscHandleMatch {
+            major: QdiscHandlePartMatch::Value(u16::from_str_radix(&major, 16).unwrap()),
+            minor: QdiscHandlePartMatch::Value(u16::from_str_radix(&minor, 16).unwrap()),
+        });
+    } else {
+        return None;
+    }
+}
+
+fn peek_hnmatch(words: &mut Peekable<std::slice::Iter<String>>) -> Option<QdiscHandleMatch> {
+    if let Some(word) = words.peek() {
+        parse_hnmatch_one(word)
+    } else {
+        None
+    }
+}
+
+fn parse_hnmatch(words: &mut Peekable<std::slice::Iter<String>>) -> Option<QdiscHandleMatch> {
+    if let Some(hnmatch) = peek_hnmatch(words) {
+        words.next();
+        Some(hnmatch)
+    } else {
+        None
+    }
+}
+
+#[derive(Debug)]
+struct CounterNameMatch {
     pat: glob::Pattern,
     unit: ct::UnitChain,
 }
 struct EthtoolCounterRule {
     ifmatches: Vec<glob::Pattern>,
-    ctmatches: Vec<EthtoolCounterMatch>,
+    ctmatches: Vec<CounterNameMatch>,
 }
 
 impl ct::CounterRule for EthtoolCounterRule {
@@ -247,6 +317,91 @@ impl ct::CounterRule for EthtoolCounterRule {
     }
 }
 
+fn parse_ifmatches(
+    words: &mut Peekable<std::slice::Iter<String>>,
+) -> Result<Vec<glob::Pattern>, String> {
+    let mut ifmatches = Vec::new();
+    while let Some(pat) = match parse_ifmatch(words) {
+        Ok(maybe_pat) => maybe_pat,
+        Err(err) => return Err(err.msg.to_string()),
+    } {
+        ifmatches.push(pat);
+    }
+    if ifmatches.is_empty() {
+        return Err("Expected one or more @ifmatches".to_string());
+    }
+
+    Ok(ifmatches)
+}
+
+fn parse_hnmatches(words: &mut Peekable<std::slice::Iter<String>>) -> Vec<QdiscHandleMatch> {
+    let mut hnmatches = Vec::new();
+    while let Some(pat) = parse_hnmatch(words) {
+        hnmatches.push(pat);
+    }
+    if hnmatches.is_empty() {
+        hnmatches.push(QdiscHandleMatch {
+            major: QdiscHandlePartMatch::Any,
+            minor: QdiscHandlePartMatch::Any,
+        });
+    }
+    hnmatches
+}
+
+fn parse_ctmatches(
+    words: &mut Peekable<std::slice::Iter<String>>,
+) -> Result<Vec<CounterNameMatch>, String> {
+    let mut ctmatches = Vec::<(glob::Pattern, Option<ct::UnitChain>)>::new();
+    while let Some(word) = words.peek() {
+        if is_ns(word) || is_ifmatch(word) {
+            break;
+        }
+        if is_unit(word) {
+            return Err(format!("Unexpected unit before counter: {}", word));
+        }
+
+        match glob::Pattern::new(&word) {
+            Ok(pat) => ctmatches.push((pat, None)),
+            Err(err) => return Err(err.msg.to_string()),
+        }
+        words.next();
+
+        if let Some(u) = parse_unit(words)? {
+            for ctmatch in ctmatches.iter_mut().rev() {
+                if ctmatch.1.is_none() {
+                    ctmatch.1 = Some(u.clone());
+                } else {
+                    break;
+                }
+            }
+        }
+    }
+
+    if ctmatches.is_empty() {
+        ctmatches.push((glob::Pattern::new("*").unwrap(), None));
+    }
+
+    for ctmatch in ctmatches.iter_mut() {
+        if ctmatch.1.is_none() {
+            ctmatch.1 = Some(ct::UnitChain {
+                units: vec![ct::Unit {
+                    prefix: ct::UPfx::None,
+                    base: ct::UBase::Units,
+                }],
+                freq: ct::UFreq::PerSecond,
+            });
+        }
+    }
+
+    Ok(ctmatches
+        .drain(..)
+        .map(|(pat, unit)| CounterNameMatch {
+            pat: pat,
+            unit: unit.unwrap(),
+        })
+        .collect())
+}
+
 struct EthtoolParser {}
 
 impl Parser for EthtoolParser {
@@ -259,75 +414,127 @@ impl Parser for EthtoolParser {
             return Ok(Vec::new());
         }
 
-        let mut ifmatches = Vec::new();
-        while let Some(pat) = match parse_ifmatch(words) {
-            Ok(maybe_pat) => maybe_pat,
-            Err(err) => return Err(err.msg.to_string()),
-        } {
-            ifmatches.push(pat);
-        }
-        if ifmatches.is_empty() {
-            return Err("Expected one or more @ifmatches".to_string());
-        }
-
-        let mut ctmatches = Vec::<(glob::Pattern, Option<ct::UnitChain>)>::new();
-        while let Some(word) = words.peek() {
-            if is_ns(word) || is_ifmatch(word) {
-                break;
-            }
-            if is_unit(word) {
-                return Err(format!("Unexpected unit before counter: {}", word));
-            }
-
-            match glob::Pattern::new(&word) {
-                Ok(pat) => ctmatches.push((pat, None)),
-                Err(err) => return Err(err.msg.to_string()),
-            }
-            words.next();
-
-            if let Some(u) = parse_unit(words)? {
-                for ctmatch in ctmatches.iter_mut().rev() {
-                    if ctmatch.1.is_none() {
-                        ctmatch.1 = Some(u.clone());
-                    } else {
-                        break;
-                    }
-                }
-            }
-        }
-
-        if ctmatches.is_empty() {
-            ctmatches.push((glob::Pattern::new("*").unwrap(), None));
-        }
-
-        for ctmatch in ctmatches.iter_mut() {
-            if ctmatch.1.is_none() {
-                ctmatch.1 = Some(ct::UnitChain {
-                    units: vec![ct::Unit {
-                        prefix: ct::UPfx::None,
-                        base: ct::UBase::Units,
-                    }],
-                    freq: ct::UFreq::PerSecond,
-                });
-            }
-        }
-
         let ret: Vec<Box<dyn ct::CounterRule>> = vec![Box::new(EthtoolCounterRule {
-            ifmatches: ifmatches,
-            ctmatches: ctmatches
-                .drain(..)
-                .map(|(pat, unit)| EthtoolCounterMatch {
-                    pat: pat,
-                    unit: unit.unwrap(),
-                })
-                .collect(),
+            ifmatches: parse_ifmatches(words)?,
+            ctmatches: parse_ctmatches(words)?,
         })];
 
         Ok(ret)
     }
 }
 
-const PARSERS: [(&str, &dyn Parser); 1] = [("ethtool", &EthtoolParser {})];
+struct QdiscCounterRule {
+    ifmatches: Vec<glob::Pattern>,
+    hnmatches: Vec<QdiscHandleMatch>,
+    // xxx Qdisc counters have a known unit. Implement it as a fallback for unspecified units.
+    ctmatches: Vec<CounterNameMatch>,
+}
+
+impl ct::CounterRule for QdiscCounterRule {
+    fn counters(&self) -> Result<Vec<ct::CounterImm>, String> {
+        let mut ret = Vec::new();
+        for qdisc_stat in netlink::qdiscs() {
+            if !self
+                .ifmatches
+                .iter()
+                .any(|ref pat| pat.matches(&qdisc_stat.ifname))
+            {
+                continue;
+            }
+
+            let mut hnmatched = false;
+            let hnmajor: u16 = (qdisc_stat.handle >> 16) as u16;
+            let pnmajor: u16 = (qdisc_stat.parent >> 16) as u16;
+            let pnminor: u16 = (qdisc_stat.parent & 0xffffu32) as u16;
+            for hnmatch in &self.hnmatches {
+                let match_major = match hnmatch.minor {
+                    QdiscHandlePartMatch::None => {
+                        // <major>:, the given qdisc
+                        hnmajor
+                    }
+                    QdiscHandlePartMatch::Any => {
+                        // <major>:*, all qdiscs under major parent
+                        pnmajor
+                    }
+                    QdiscHandlePartMatch::Value(minor) => {
+                        // <major>:<minor>, qdisc with the given parent
+                        if minor != pnminor {
+                            continue;
+                        }
+                        pnmajor
+                    }
+                };
+                match hnmatch.major {
+                    QdiscHandlePartMatch::Any => {}
+                    QdiscHandlePartMatch::None => {}
+                    QdiscHandlePartMatch::Value(major) => {
+                        if major != match_major {
+                            continue;
+                        }
+                    }
+                }
+                hnmatched = true;
+                break;
+            }
+            if !hnmatched {
+                continue;
+            }
+
+            for ctmatch in &self.ctmatches {
+                if ctmatch.pat.matches(&qdisc_stat.name) {
+                    let ctname = format!(
+                        "{} {:x}:{:x} {:x}: {}",
+                        qdisc_stat.kind, pnmajor, pnminor, hnmajor, qdisc_stat.name
+                    );
+                    ret.push(ct::CounterImm {
+                        key: ct::CounterKey {
+                            ctns: "qdisc",
+                            ifname: qdisc_stat.ifname.clone(), // xxx clone?
+                            ctname: ctname,
+                        },
+                        value: qdisc_stat.value,
+                        unit: ctmatch.unit.clone(),
+                    });
+                    break;
+                }
+            }
+        }
+        Ok(ret)
+    }
+    fn fmt(&self) -> String {
+        format!(
+            "Qdisc ifmatches={:?} handles={:?} ctmatches={:?}",
+            self.ifmatches, self.hnmatches, self.ctmatches
+        )
+    }
+}
+
+struct QdiscParser {}
+
+impl Parser for QdiscParser {
+    fn parse(
+        &self,
+        words: &mut Peekable<std::slice::Iter<String>>,
+    ) -> Result<Vec<Box<dyn ct::CounterRule>>, String> {
+        if words.peek().is_none() {
+            return Ok(Vec::new());
+        }
+
+        let ifmatches = parse_ifmatches(words)?;
+        let hnmatches = parse_hnmatches(words);
+        let ctmatches = parse_ctmatches(words)?;
+
+        let ret: Vec<Box<dyn ct::CounterRule>> = vec![Box::new(QdiscCounterRule {
+            ifmatches: ifmatches,
+            hnmatches: hnmatches,
+            ctmatches: ctmatches,
+        })];
+        Ok(ret)
+    }
+}
+
+const PARSERS: [(&str, &dyn Parser); 2] =
+    [("ethtool", &EthtoolParser {}), ("qdisc", &QdiscParser {})];
 
 pub fn parse_expr(
     words: &mut Peekable<std::slice::Iter<String>>,

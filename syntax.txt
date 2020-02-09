@@ -87,13 +87,15 @@
   - ethtool: @if1 @if2 tx_*             # the same, on these two interfaces
   - ethtool: @if tx_bytes tx_packets    # these two ethtool counters
   - ethtool: @if1 tx_* @if2 rx_         # ethtool applies to the whole recipe
-  - qdisc: @if 1: bytes                 # the qdisc itself
-  - qdisc: @if ingress bytes            # ingress clsact qdisc
-  - qdisc: @if egress bytes             # egress clsact qdisc
-  - qdisc: @if 1:1 bytes                # a class
-  - qdisc: @if 1:* bytes                # all classes
-  - qdisc: @if 1:1 1:2 1:3 bytes        # these classes
-  - qdisc: @if 1:1 1:2 bytes drops      # these counters under these classes
+  - qdisc: @if 1: bytes                 # this qdisc
+  - qdisc: @if root bytes               # qdisc whose parent is root
+  - qdisc: @if 1:1 bytes                # qdisc whose parent is this class
+  - qdisc: @if 1:* bytes                # all qdiscs parented at 1:
+  - qdisc: @if 1:1 1:2 1:3 bytes        # qdiscs parented at these classes
+  - qdisc: @if 1:1 1:2 bytes drops      # these counters under qdiscs parented at these classes
+  - class: @if 1:1 bytes                # mostly the same syntax like qdisc, but this time it select classes
+                                        # it looks like fq_codel make difference between App counters for a qdisc
+					# and for a class, perhaps it's a more general thing
   - action: @if [a:b|ingress|egress] [protocol x] [pref y] [chain z] [handle h] [action a] counter
     - filters are messy. It looks like we will need to use keywords to annotate
       what's what. Then "bytes" and "packets" (or just a glob, or mentioning
@@ -230,3 +232,9 @@
 - space un/marks/toggles active item
 
 - OR: just read json for first iteration?
+
+- top 10 \( ethtool: blah blah \)
+  - filters -- take list of counters, filter some of them out
+  - sorters -- take list of counters, sort them
+    - default - sort by (ifname, ctname)
+    - top 10: sort by (counter alue)
