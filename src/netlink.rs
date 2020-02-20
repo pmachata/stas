@@ -203,6 +203,87 @@ pub struct QdiscStat {
     pub value: u64,
 }
 
+struct QdiscStatsAux {
+    stats: Vec<QdiscStat>,
+    ifname: String,
+    handle: u32,
+    parent: u32,
+}
+
+impl QdiscStatsAux {
+    fn new(ifname: &str, handle: u32, parent: u32) -> QdiscStatsAux {
+        QdiscStatsAux {
+            stats: Vec::new(),
+            ifname: ifname.to_string(),
+            handle: handle,
+            parent: parent,
+        }
+    }
+    fn push_counter(&mut self, kind: &String, name: &str, value: u64) {
+        self.stats.push(QdiscStat {
+            ifname: self.ifname.clone(),
+            kind: (*kind).clone(),
+            handle: self.handle,
+            parent: self.parent,
+            name: name.to_string(),
+            value: value,
+        });
+    }
+}
+
+trait QdiscAppParser {
+    fn parse_app(&self, kind: String, aux: &mut QdiscStatsAux, payload: &Vec<u8>);
+}
+
+#[derive(Debug)]
+struct TcRedXstats {
+    early: u32,  /* Early drops */
+    pdrop: u32,  /* Drops due to queue limits */
+    other: u32,  /* Drops due to drop() calls */
+    marked: u32, /* Marked packets */
+}
+
+impl Nl for TcRedXstats {
+    fn serialize(&self, mem: &mut StreamWriteBuffer) -> Result<(), SerError> {
+        self.early.serialize(mem)?;
+        self.pdrop.serialize(mem)?;
+        self.other.serialize(mem)?;
+        self.marked.serialize(mem)?;
+        Ok(())
+    }
+
+    fn deserialize<B>(mem: &mut StreamReadBuffer<B>) -> Result<Self, DeError>
+    where
+        B: AsRef<[u8]>,
+    {
+        Ok(TcRedXstats {
+            early: u32::deserialize(mem)?,
+            pdrop: u32::deserialize(mem)?,
+            other: u32::deserialize(mem)?,
+            marked: u32::deserialize(mem)?,
+        })
+    }
+
+    fn size(&self) -> usize {
+        self.early.size() + self.pdrop.size() + self.other.size() + self.marked.size()
+    }
+}
+
+struct QdiscAppParserRed {}
+
+impl QdiscAppParser for QdiscAppParserRed {
+    fn parse_app(&self, kind: String, aux: &mut QdiscStatsAux, payload: &Vec<u8>) {
+        let mut buf = StreamReadBuffer::new(&payload);
+        let xstats = TcRedXstats::deserialize(&mut buf).unwrap();
+        aux.push_counter(&kind, "early", xstats.early as u64);
+        aux.push_counter(&kind, "pdrop", xstats.pdrop as u64);
+        aux.push_counter(&kind, "other", xstats.other as u64);
+        aux.push_counter(&kind, "marked", xstats.marked as u64);
+    }
+}
+
+const QDISC_APP_PARSERS: [(&str, &dyn QdiscAppParser); 1] = [("red", &QdiscAppParserRed {})];
+
 pub fn qdiscs() -> Vec<QdiscStat> {
     let ifnames = ifindex_map();
     let mut ret = Vec::new();
@@ -230,23 +311,11 @@ pub fn qdiscs() -> Vec<QdiscStat> {
 
     while let Ok(nlmsg) = socket.recv_nl::<u16, Tcmsg>(None) {
         let tcm = nlmsg.nl_payload;
-        let handle = tcm.tcm_handle;
-        let parent = tcm.tcm_parent;
-
         let ifname = match ifnames.get(&tcm.tcm_ifindex) {
             None => continue,
             Some(name) => name,
         };
-        let mut push_counter = |kind: &String, name: &str, value: u64| {
-            ret.push(QdiscStat {
-                ifname: ifname.clone(),
-                kind: (*kind).clone(),
-                handle: handle,
-                parent: parent,
-                name: name.to_string(),
-                value: value,
-            });
-        };
+        let mut aux = QdiscStatsAux::new(ifname, tcm.tcm_handle, tcm.tcm_parent);
 
         let mut kind: String = "".to_string();
         for attr in tcm.rtattrs {
@@ -264,32 +333,41 @@ pub fn qdiscs() -> Vec<QdiscStat> {
                         match nattr.rta_type {
                             TcaStats2::Basic => {
                                 let gnet_stats = GnetStatsBasic::deserialize(&mut buf).unwrap();
-                                push_counter(&kind, "bytes", gnet_stats.bytes);
-                                push_counter(&kind, "packets", gnet_stats.packets as u64);
+                                aux.push_counter(&kind, "bytes", gnet_stats.bytes);
+                                aux.push_counter(&kind, "packets", gnet_stats.packets as u64);
                             }
                             TcaStats2::Queue => {
                                 let gnet_stats = GnetStatsQueue::deserialize(&mut buf).unwrap();
-                                push_counter(&kind, "qlen", gnet_stats.qlen as u64);
-                                push_counter(&kind, "backlog", gnet_stats.backlog as u64);
-                                push_counter(&kind, "drops", gnet_stats.drops as u64);
-                                push_counter(&kind, "requeues", gnet_stats.requeues as u64);
-                                push_counter(&kind, "overlimits", gnet_stats.overlimits as u64);
+                                aux.push_counter(&kind, "qlen", gnet_stats.qlen as u64);
+                                aux.push_counter(&kind, "backlog", gnet_stats.backlog as u64);
+                                aux.push_counter(&kind, "drops", gnet_stats.drops as u64);
+                                aux.push_counter(&kind, "requeues", gnet_stats.requeues as u64);
+                                aux.push_counter(&kind, "overlimits", gnet_stats.overlimits as u64);
                             }
                             TcaStats2::RateEst => {
                                 let gnet_stats =
                                     GnetStatsRateEst::<u32>::deserialize(&mut buf).unwrap();
-                                push_counter(&kind, "bps", gnet_stats.bps as u64);
-                                push_counter(&kind, "pps", gnet_stats.pps as u64);
+                                aux.push_counter(&kind, "bps", gnet_stats.bps as u64);
+                                aux.push_counter(&kind, "pps", gnet_stats.pps as u64);
                             }
                             TcaStats2::RateEst64 => {
                                 let gnet_stats =
                                     GnetStatsRateEst::<u64>::deserialize(&mut buf).unwrap();
-                                push_counter(&kind, "bps", gnet_stats.bps);
-                                push_counter(&kind, "pps", gnet_stats.pps);
+                                aux.push_counter(&kind, "bps", gnet_stats.bps);
+                                aux.push_counter(&kind, "pps", gnet_stats.pps);
                             }
                             TcaStats2::App => {
-                                // xxx Parse according to kind
+                                if let Some((kind, parser)) =
+                                    QDISC_APP_PARSERS.iter().find(|(a_kind, _)| *a_kind == kind)
+                                {
+                                    parser.parse_app(
+                                        kind.to_string(),
+                                        &mut aux,
+                                        &nattr.rta_payload,
+                                    );
+                                }
                             }
+
                             _ => {}
                         }
                     }
@@ -301,6 +379,7 @@ pub fn qdiscs() -> Vec<QdiscStat> {
                 _ => {}
             }
         }
+        ret.extend(aux.stats.drain(..));
     }
 
     return ret;
