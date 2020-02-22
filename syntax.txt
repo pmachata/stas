@@ -64,23 +64,6 @@
             CounterMatchGrpOpt "")))
       (Unit "pps"))))
 
-- units:
-  - /1, /b, /B, /s, /p - units, bits, bytes, seconds, packets
-  - /*ps, /d* - per second, delta since the start
-  - /K*, /M*, /G*, /m*, /u*, /n*, ... - unit prefixes
-  - more than one unit prefix can't be used at once
-  - /*ps and /d* are mutually exclusive as well
-  - conversions:
-    - 1:X == 1:1      # Converting to "1" doesn't change the value, only the unit.
-    - X:KX == 1:1000  # Unit prefixes work in an obvious manner
-    - b:B == 1:8      # Bit/Byte conversions
-    - default unit is "1"
-  - e.g.:
-    - /usps   ::= 1 -> us & show per-second values
-    - /B/bps  ::= 1 -> B -> b & show per-second values
-    - /dp     ::= 1 -> packets & show delta since the program started
-    - /us     ::= 1 -> us & show the value as is
-
 - counters:
   - it looks like we can make do without parentheses
   - ethtool: @if tx_*                   # ethtool counters starting with tx_
@@ -116,6 +99,50 @@
   - action: @if 1: chain * handle 0x123 bytes # this handle on all chains
   - action: @if 1:1 1:2 chain 0 1 2 handle 0x123 0x234 bytes # each keyword can have many arguments
   - action: @if \( chain 1 handle 0x123 \) \( chain 2 handle 0x234 \) bytes
+  - occupancy:                           # for devlink occupancy
+  - occupancy: @if pool A        	 # current occupancy of pool N
+  - occupancy: @if pool A B C    	 # these several pools
+  - occupancy: @if pool A value  	 # the same, but requested explicitly
+  - occupancy: @if pool A watermark	 # pool occupancy watermark
+  - occupancy: @if pool A *	         # both current and watermark
+  - occupancy: @DEV/index [...]          # interface can be a devlink port reference
+  - occupancy: @if itc A [...]           # ingress TC occupancy
+  - occupancy: @if etc A [...]           # egress TC occupancy
+  - occupancy: @if pool A B itc C D etc E F value watermark
+    - I think it should be allowed to dump all that I care about in one line
+
+- value filters:
+  - non0    # Filter out zero counters
+    - @if1 \*_octets\* non0
+    - actually it looks like this should be on the same layer that deals with
+      sorting by value etc. When I say non0, I don't want to see lines that will
+      just say 0. I don't care that the counter has non-0 value if nothing is
+      happening on it, and I want to show per-second value.
+      - but then, I could have a set of counters where non-0 should be applied,
+        and set of counter where it should not. So counter matches should carry
+        information about what counter filters apply to them.
+      - looks like there are two types of filters: list filters, which take a
+        list of counters to display, and return a new list of counters to
+        display. The "where's my traffic" filter is an example. The other type
+        is individual counter filter, which decides whether an already-yielded
+        counter should be in the list at all.
+
+- units:
+  - /1, /b, /B, /s, /p - units, bits, bytes, seconds, packets
+  - /*ps, /d* - per second, delta since the start
+  - /K*, /M*, /G*, /m*, /u*, /n*, ... - unit prefixes
+  - more than one unit prefix can't be used at once
+  - /*ps and /d* are mutually exclusive as well
+  - conversions:
+    - 1:X == 1:1      # Converting to "1" doesn't change the value, only the unit.
+    - X:KX == 1:1000  # Unit prefixes work in an obvious manner
+    - b:B == 1:8      # Bit/Byte conversions
+    - default unit is "1"
+  - e.g.:
+    - /usps   ::= 1 -> us & show per-second values
+    - /B/bps  ::= 1 -> B -> b & show per-second values
+    - /dp     ::= 1 -> packets & show delta since the program started
+    - /us     ::= 1 -> us & show the value as is
 
 - Expr ::= [Namespace:] CounterExpr [CounterExpr ...]
 - CounterExpr ::= IfnameMatch CounterMatchGrp
