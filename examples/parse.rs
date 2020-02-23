@@ -11,7 +11,7 @@ fn main() {
     ) {
         Ok(rules) => {
             for rule in rules {
-                println!("rule {}", rule.fmt());
+                println!("rule {:?}", rule);
             }
         }
         Err(e) => println!("Error: {}", e),

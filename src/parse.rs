@@ -273,11 +273,43 @@ fn parse_hnmatch(words: &mut Peekable<std::slice::Iter<String>>) -> Option<Qdisc
     }
 }
 
+fn parse_value_filter_one(word: &String) -> Option<Box<dyn ct::CounterValueFilter>> {
+    if word == "non0" {
+        Some(Box::new(ct::NonZeroCounterFilter {}))
+    } else {
+        None
+    }
+}
+
+fn peek_value_filter(
+    words: &mut Peekable<std::slice::Iter<String>>,
+) -> Option<Box<dyn ct::CounterValueFilter>> {
+    if let Some(word) = words.peek() {
+        parse_value_filter_one(word)
+    } else {
+        None
+    }
+}
+
+fn parse_value_filter(
+    words: &mut Peekable<std::slice::Iter<String>>,
+) -> Option<Box<dyn ct::CounterValueFilter>> {
+    if let Some(vfilt) = peek_value_filter(words) {
+        words.next();
+        Some(vfilt)
+    } else {
+        None
+    }
+}
+
 #[derive(Debug)]
 struct CounterNameMatch {
     pat: glob::Pattern,
     unit: ct::UnitChain,
+    vfilt: Vec<Box<dyn ct::CounterValueFilter>>,
 }
+
+#[derive(Debug)]
 struct EthtoolCounterRule {
     ifmatches: Vec<glob::Pattern>,
     ctmatches: Vec<CounterNameMatch>,
@@ -301,6 +333,7 @@ impl ct::CounterRule for EthtoolCounterRule {
                             },
                             value: stat.value,
                             unit: ctmatch.unit.clone(),
+                            filter: ctmatch.vfilt.iter().map(|vf| vf.clone_box()).collect(),
                         });
                         break;
                     }
@@ -308,12 +341,6 @@ impl ct::CounterRule for EthtoolCounterRule {
             }
         }
         Ok(ret)
-    }
-    fn fmt(&self) -> String {
-        format!(
-            "Ethtool ifmatches={:?} ctmatches={:?}",
-            self.ifmatches, self.ctmatches
-        )
     }
 }
 
@@ -351,7 +378,12 @@ fn parse_hnmatches(words: &mut Peekable<std::slice::Iter<String>>) -> Vec<QdiscH
 fn parse_ctmatches(
     words: &mut Peekable<std::slice::Iter<String>>,
 ) -> Result<Vec<CounterNameMatch>, String> {
-    let mut ctmatches = Vec::<(glob::Pattern, Option<ct::UnitChain>)>::new();
+    struct Ctmatch {
+        pat: glob::Pattern,
+        unit: Option<ct::UnitChain>,
+        vfilt: Vec<Box<dyn ct::CounterValueFilter>>,
+    }
+    let mut ctmatches = Vec::<Ctmatch>::new();
     while let Some(word) = words.peek() {
         if is_ns(word) || is_ifmatch(word) {
             break;
@@ -360,16 +392,29 @@ fn parse_ctmatches(
             return Err(format!("Unexpected unit before counter: {}", word));
         }
 
+        let mut ctmatch;
         match glob::Pattern::new(&word) {
-            Ok(pat) => ctmatches.push((pat, None)),
+            Ok(pat) => {
+                ctmatch = Ctmatch {
+                    pat: pat,
+                    unit: None,
+                    vfilt: Vec::new(),
+                };
+            }
             Err(err) => return Err(err.msg.to_string()),
         }
         words.next();
 
+        while let Some(vf) = parse_value_filter(words) {
+            ctmatch.vfilt.push(vf);
+        }
+
+        ctmatches.push(ctmatch);
+
         if let Some(u) = parse_unit(words)? {
             for ctmatch in ctmatches.iter_mut().rev() {
-                if ctmatch.1.is_none() {
-                    ctmatch.1 = Some(u.clone());
+                if ctmatch.unit.is_none() {
+                    ctmatch.unit = Some(u.clone());
                 } else {
                     break;
                 }
@@ -378,12 +423,16 @@ fn parse_ctmatches(
     }
 
     if ctmatches.is_empty() {
-        ctmatches.push((glob::Pattern::new("*").unwrap(), None));
+        ctmatches.push(Ctmatch {
+            pat: glob::Pattern::new("*").unwrap(),
+            unit: None,
+            vfilt: Vec::new(),
+        });
     }
 
     for ctmatch in ctmatches.iter_mut() {
-        if ctmatch.1.is_none() {
-            ctmatch.1 = Some(ct::UnitChain {
+        if ctmatch.unit.is_none() {
+            ctmatch.unit = Some(ct::UnitChain {
                 units: vec![ct::Unit {
                     prefix: ct::UPfx::None,
                     base: ct::UBase::Units,
@@ -395,9 +444,10 @@ fn parse_ctmatches(
 
     Ok(ctmatches
         .drain(..)
-        .map(|(pat, unit)| CounterNameMatch {
-            pat: pat,
-            unit: unit.unwrap(),
+        .map(|ctmatch| CounterNameMatch {
+            pat: ctmatch.pat,
+            unit: ctmatch.unit.unwrap(),
+            vfilt: ctmatch.vfilt,
         })
         .collect())
 }
@@ -423,6 +473,7 @@ impl Parser for EthtoolParser {
     }
 }
 
+#[derive(Debug)]
 struct QdiscCounterRule {
     ifmatches: Vec<glob::Pattern>,
     hnmatches: Vec<QdiscHandleMatch>,
@@ -494,18 +545,13 @@ impl ct::CounterRule for QdiscCounterRule {
                         },
                         value: qdisc_stat.value,
                         unit: ctmatch.unit.clone(),
+                        filter: ctmatch.vfilt.iter().map(|vf| vf.clone_box()).collect(),
                     });
                     break;
                 }
             }
         }
         Ok(ret)
-    }
-    fn fmt(&self) -> String {
-        format!(
-            "Qdisc ifmatches={:?} handles={:?} ctmatches={:?}",
-            self.ifmatches, self.hnmatches, self.ctmatches
-        )
     }
 }
 

@@ -16,6 +16,7 @@ struct CounterHistory {
     base: u64,
     age: u32,
     unit: stas::UnitChain,
+    filter: Vec<Box<dyn stas::CounterValueFilter>>,
 }
 
 fn show_help_exit(rc: i32) {
@@ -30,28 +31,37 @@ struct CounterLine<'a> {
     avg: Option<stas::Value>,
     freq: &'a stas::UFreq,
     unit: stas::Unit,
+    filter: &'a Vec<Box<dyn stas::CounterValueFilter>>,
 }
 
-trait CounterFilter {
+trait CounterListFilter {
     fn filter<'a>(&self, counters: Vec<CounterLine<'a>>) -> Vec<CounterLine<'a>>;
 }
 
-struct NonZeroCounterFilter {}
-
-impl CounterFilter for NonZeroCounterFilter {
+impl CounterListFilter for stas::NonZeroCounterFilter {
     fn filter<'a>(&self, mut counters: Vec<CounterLine<'a>>) -> Vec<CounterLine<'a>> {
         counters
             .drain(..)
-            .filter(|cl| {
-                cl.value.unwrap_or(stas::Value::from_num(0)) != 0
-                    || cl.avg.unwrap_or(stas::Value::from_num(0)) != 0
-            })
+            .filter(|cl| self.do_filter(&cl.value, &cl.avg))
+            .collect()
+    }
+}
+
+#[derive(Clone)]
+struct ApplyValueFilters {}
+
+impl CounterListFilter for ApplyValueFilters {
+    fn filter<'a>(&self, mut counters: Vec<CounterLine<'a>>) -> Vec<CounterLine<'a>> {
+        counters
+            .drain(..)
+            .filter(|cl| cl.filter.iter().all(|vf| vf.filter(&cl.value, &cl.avg)))
             .collect()
     }
 }
 
 fn main() {
-    let mut counter_filters: Vec<Box<dyn CounterFilter>> = Vec::new();
+    let mut list_filters: Vec<Box<dyn CounterListFilter>> = Vec::new();
+    list_filters.push(Box::new(ApplyValueFilters {}));
     let rules;
 
     {
@@ -65,7 +75,7 @@ fn main() {
         while let Some(arg) = it.peek() {
             match &arg[..] {
                 "--non0" => {
-                    counter_filters.push(Box::new(NonZeroCounterFilter {}));
+                    list_filters.push(Box::new(stas::NonZeroCounterFilter {}));
                     it.next();
                 }
                 "--once" => {
@@ -142,6 +152,7 @@ fn main() {
                                 prev: None,
                                 age: 0,
                                 unit: imm.unit,
+                                filter: imm.filter.iter().map(|vf| vf.clone_box()).collect(),
                             });
                         }
                     }
@@ -188,10 +199,11 @@ fn main() {
                 avg: avg,
                 freq: &entry.unit.freq,
                 unit: unit,
+                filter: &entry.filter,
             });
         }
 
-        for cf in &counter_filters {
+        for cf in &list_filters {
             counter_lines = cf.filter(counter_lines);
         }
 

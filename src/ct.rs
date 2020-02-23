@@ -110,6 +110,11 @@ pub fn humanize(
     }
 }
 
+pub trait CounterValueFilter: std::fmt::Debug {
+    fn filter(&self, value: &Option<Value>, avg: &Option<Value>) -> bool;
+    fn clone_box(&self) -> Box<dyn CounterValueFilter>;
+}
+
 #[derive(Eq, PartialEq)]
 pub struct CounterKey {
     pub ctns: &'static str,
@@ -121,11 +126,29 @@ pub struct CounterImm {
     pub key: CounterKey,
     pub value: u64,
     pub unit: UnitChain,
+    pub filter: Vec<Box<dyn CounterValueFilter>>,
 }
 
-pub trait CounterRule {
+pub trait CounterRule: std::fmt::Debug {
     fn counters(&self) -> Result<Vec<CounterImm>, String>;
-    fn fmt(&self) -> String;
+}
+
+#[derive(Debug, Clone)]
+pub struct NonZeroCounterFilter {}
+
+impl NonZeroCounterFilter {
+    pub fn do_filter(&self, value: &Option<Value>, avg: &Option<Value>) -> bool {
+        value.unwrap_or(Value::from_num(0)) != 0 || avg.unwrap_or(Value::from_num(0)) != 0
+    }
+}
+
+impl CounterValueFilter for NonZeroCounterFilter {
+    fn filter(&self, value: &Option<Value>, avg: &Option<Value>) -> bool {
+        self.do_filter(&value, &avg)
+    }
+    fn clone_box(&self) -> Box<dyn CounterValueFilter> {
+        Box::new(self.clone())
+    }
 }
 
 pub fn convert(
