@@ -302,6 +302,10 @@ fn main() {
         nlines = line;
         stdout().flush().unwrap();
 
-        thread::sleep(time::Duration::from_millis(cycle_ms as u64) - start.elapsed());
+        let cycle_dur = time::Duration::from_millis(cycle_ms as u64);
+        let e_dur = start.elapsed();
+        if cycle_dur > e_dur {
+            thread::sleep(cycle_dur - e_dur);
+        }
     }
 }
