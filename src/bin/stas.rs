@@ -62,6 +62,7 @@ impl CounterListFilter for ApplyValueFilters {
 fn main() {
     let mut list_filters: Vec<Box<dyn CounterListFilter>> = Vec::new();
     list_filters.push(Box::new(ApplyValueFilters {}));
+    let mut once: bool = false;
     let rules;
 
     {
@@ -79,10 +80,8 @@ fn main() {
                     it.next();
                 }
                 "--once" => {
-                    println!("once");
-                    return;
-                    // xxx
-                    // it.next();
+                    once = true;
+                    it.next();
                 }
                 "--help" => {
                     show_help_exit(0);
@@ -301,6 +300,10 @@ fn main() {
         }
         nlines = line;
         stdout().flush().unwrap();
+
+        if once {
+            break;
+        }
 
         let cycle_dur = time::Duration::from_millis(cycle_ms as u64);
         let e_dur = start.elapsed();
