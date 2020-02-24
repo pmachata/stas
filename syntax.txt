@@ -133,8 +133,8 @@
   - /K*, /M*, /G*, /m*, /u*, /n*, ... - unit prefixes
   - more than one unit prefix can't be used at once
   - /*ps and /d* are mutually exclusive as well
-  - /ps - whatever unit is default for the counter, per second
-  - /d - similar for delta
+  - /xps - whatever unit is default for the counter, per second
+  - /dx, /x - similar for delta, absolute value
   - conversions:
     - 1:X == 1:1      # Converting to "1" doesn't change the value, only the unit.
     - X:KX == 1:1000  # Unit prefixes work in an obvious manner

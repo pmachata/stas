@@ -81,6 +81,55 @@ pub struct UnitChain {
     pub freq: UFreq,
 }
 
+pub fn unit_units_ps() -> UnitChain {
+    UnitChain {
+        units: vec![Unit {
+            prefix: UPfx::None,
+            base: UBase::Units,
+        }],
+        freq: UFreq::PerSecond,
+    }
+}
+
+pub fn unit_bytes() -> UnitChain {
+    UnitChain {
+        units: vec![Unit {
+            prefix: UPfx::None,
+            base: UBase::Bytes,
+        }]
+        .to_vec(),
+        freq: UFreq::AsIs,
+    }
+}
+
+pub fn unit_bytes_bits_ps() -> UnitChain {
+    UnitChain {
+        units: vec![
+            Unit {
+                prefix: UPfx::None,
+                base: UBase::Bytes,
+            },
+            Unit {
+                prefix: UPfx::None,
+                base: UBase::Bits,
+            },
+        ]
+        .to_vec(),
+        freq: UFreq::PerSecond,
+    }
+}
+
+pub fn unit_packets_ps() -> UnitChain {
+    UnitChain {
+        units: vec![Unit {
+            prefix: UPfx::None,
+            base: UBase::Packets,
+        }]
+        .to_vec(),
+        freq: UFreq::PerSecond,
+    }
+}
+
 pub fn humanize(
     mut value: Value,
     base: UPfx,

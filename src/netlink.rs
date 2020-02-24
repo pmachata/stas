@@ -1,6 +1,7 @@
 extern crate libc;
 extern crate neli;
 
+use crate::ct;
 use neli::consts::*;
 use neli::err::*;
 use neli::impl_var;
@@ -201,6 +202,7 @@ pub struct QdiscStat {
     pub parent: u32,
     pub name: String,
     pub value: u64,
+    pub default_unit: ct::UnitChain,
 }
 
 struct QdiscStatsAux {
@@ -219,7 +221,7 @@ impl QdiscStatsAux {
             parent: parent,
         }
     }
-    fn push_counter(&mut self, kind: &String, name: &str, value: u64) {
+    fn push_counter(&mut self, kind: &String, name: &str, value: u64, default_unit: ct::UnitChain) {
         self.stats.push(QdiscStat {
             ifname: self.ifname.clone(),
             kind: (*kind).clone(),
@@ -227,6 +229,7 @@ impl QdiscStatsAux {
             parent: self.parent,
             name: name.to_string(),
             value: value,
+            default_unit: default_unit,
         });
     }
 }
@@ -275,10 +278,10 @@ impl QdiscAppParser for QdiscAppParserRed {
     fn parse_app(&self, kind: String, aux: &mut QdiscStatsAux, payload: &Vec<u8>) {
         let mut buf = StreamReadBuffer::new(&payload);
         let xstats = TcRedXstats::deserialize(&mut buf).unwrap();
-        aux.push_counter(&kind, "early", xstats.early as u64);
-        aux.push_counter(&kind, "pdrop", xstats.pdrop as u64);
-        aux.push_counter(&kind, "other", xstats.other as u64);
-        aux.push_counter(&kind, "marked", xstats.marked as u64);
+        aux.push_counter(&kind, "early", xstats.early as u64, ct::unit_packets_ps());
+        aux.push_counter(&kind, "pdrop", xstats.pdrop as u64, ct::unit_packets_ps());
+        aux.push_counter(&kind, "other", xstats.other as u64, ct::unit_packets_ps());
+        aux.push_counter(&kind, "marked", xstats.marked as u64, ct::unit_packets_ps());
     }
 }
 
@@ -333,28 +336,83 @@ pub fn qdiscs() -> Vec<QdiscStat> {
                         match nattr.rta_type {
                             TcaStats2::Basic => {
                                 let gnet_stats = GnetStatsBasic::deserialize(&mut buf).unwrap();
-                                aux.push_counter(&kind, "bytes", gnet_stats.bytes);
-                                aux.push_counter(&kind, "packets", gnet_stats.packets as u64);
+                                aux.push_counter(
+                                    &kind,
+                                    "bytes",
+                                    gnet_stats.bytes,
+                                    ct::unit_bytes_bits_ps(),
+                                );
+                                aux.push_counter(
+                                    &kind,
+                                    "packets",
+                                    gnet_stats.packets as u64,
+                                    ct::unit_packets_ps(),
+                                );
                             }
                             TcaStats2::Queue => {
                                 let gnet_stats = GnetStatsQueue::deserialize(&mut buf).unwrap();
-                                aux.push_counter(&kind, "qlen", gnet_stats.qlen as u64);
-                                aux.push_counter(&kind, "backlog", gnet_stats.backlog as u64);
-                                aux.push_counter(&kind, "drops", gnet_stats.drops as u64);
-                                aux.push_counter(&kind, "requeues", gnet_stats.requeues as u64);
-                                aux.push_counter(&kind, "overlimits", gnet_stats.overlimits as u64);
+                                aux.push_counter(
+                                    &kind,
+                                    "qlen",
+                                    gnet_stats.qlen as u64,
+                                    ct::unit_bytes(),
+                                );
+                                aux.push_counter(
+                                    &kind,
+                                    "backlog",
+                                    gnet_stats.backlog as u64,
+                                    ct::unit_bytes(),
+                                );
+                                aux.push_counter(
+                                    &kind,
+                                    "drops",
+                                    gnet_stats.drops as u64,
+                                    ct::unit_packets_ps(),
+                                );
+                                aux.push_counter(
+                                    &kind,
+                                    "requeues",
+                                    gnet_stats.requeues as u64,
+                                    ct::unit_packets_ps(),
+                                );
+                                aux.push_counter(
+                                    &kind,
+                                    "overlimits",
+                                    gnet_stats.overlimits as u64,
+                                    ct::unit_packets_ps(),
+                                );
                             }
                             TcaStats2::RateEst => {
                                 let gnet_stats =
                                     GnetStatsRateEst::<u32>::deserialize(&mut buf).unwrap();
-                                aux.push_counter(&kind, "bps", gnet_stats.bps as u64);
-                                aux.push_counter(&kind, "pps", gnet_stats.pps as u64);
+                                aux.push_counter(
+                                    &kind,
+                                    "bps",
+                                    gnet_stats.bps as u64,
+                                    ct::unit_bytes_bits_ps(),
+                                );
+                                aux.push_counter(
+                                    &kind,
+                                    "pps",
+                                    gnet_stats.pps as u64,
+                                    ct::unit_packets_ps(),
+                                );
                             }
                             TcaStats2::RateEst64 => {
                                 let gnet_stats =
                                     GnetStatsRateEst::<u64>::deserialize(&mut buf).unwrap();
-                                aux.push_counter(&kind, "bps", gnet_stats.bps);
-                                aux.push_counter(&kind, "pps", gnet_stats.pps);
+                                aux.push_counter(
+                                    &kind,
+                                    "bps",
+                                    gnet_stats.bps,
+                                    ct::unit_bytes_bits_ps(),
+                                );
+                                aux.push_counter(
+                                    &kind,
+                                    "pps",
+                                    gnet_stats.pps,
+                                    ct::unit_packets_ps(),
+                                );
                             }
                             TcaStats2::App => {
                                 if let Some((kind, parser)) =

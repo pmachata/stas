@@ -305,7 +305,7 @@ fn parse_value_filter(
 #[derive(Debug)]
 struct CounterNameMatch {
     pat: glob::Pattern,
-    unit: ct::UnitChain,
+    unit: Option<ct::UnitChain>,
     vfilt: Vec<Box<dyn ct::CounterValueFilter>>,
 }
 
@@ -325,6 +325,11 @@ impl ct::CounterRule for EthtoolCounterRule {
             for stat in ethtool_ss::stats_for(&ifname) {
                 for ctmatch in &self.ctmatches {
                     if ctmatch.pat.matches(&stat.name) {
+                        let unit = if ctmatch.unit.is_some() {
+                            ctmatch.unit.as_ref().unwrap().clone()
+                        } else {
+                            ct::unit_units_ps()
+                        };
                         ret.push(ct::CounterImm {
                             key: ct::CounterKey {
                                 ctns: "ethtool",
@@ -332,7 +337,7 @@ impl ct::CounterRule for EthtoolCounterRule {
                                 ctname: stat.name.clone(),
                             },
                             value: stat.value,
-                            unit: ctmatch.unit.clone(),
+                            unit: unit,
                             filter: ctmatch.vfilt.iter().map(|vf| vf.clone_box()).collect(),
                         });
                         break;
@@ -378,12 +383,7 @@ fn parse_hnmatches(words: &mut Peekable<std::slice::Iter<String>>) -> Vec<QdiscH
 fn parse_ctmatches(
     words: &mut Peekable<std::slice::Iter<String>>,
 ) -> Result<Vec<CounterNameMatch>, String> {
-    struct Ctmatch {
-        pat: glob::Pattern,
-        unit: Option<ct::UnitChain>,
-        vfilt: Vec<Box<dyn ct::CounterValueFilter>>,
-    }
-    let mut ctmatches = Vec::<Ctmatch>::new();
+    let mut ctmatches = Vec::<CounterNameMatch>::new();
     while let Some(word) = words.peek() {
         if is_ns(word) || is_ifmatch(word) {
             break;
@@ -395,7 +395,7 @@ fn parse_ctmatches(
         let mut ctmatch;
         match glob::Pattern::new(&word) {
             Ok(pat) => {
-                ctmatch = Ctmatch {
+                ctmatch = CounterNameMatch {
                     pat: pat,
                     unit: None,
                     vfilt: Vec::new(),
@@ -423,33 +423,14 @@ fn parse_ctmatches(
     }
 
     if ctmatches.is_empty() {
-        ctmatches.push(Ctmatch {
+        ctmatches.push(CounterNameMatch {
             pat: glob::Pattern::new("*").unwrap(),
             unit: None,
             vfilt: Vec::new(),
         });
     }
 
-    for ctmatch in ctmatches.iter_mut() {
-        if ctmatch.unit.is_none() {
-            ctmatch.unit = Some(ct::UnitChain {
-                units: vec![ct::Unit {
-                    prefix: ct::UPfx::None,
-                    base: ct::UBase::Units,
-                }],
-                freq: ct::UFreq::PerSecond,
-            });
-        }
-    }
-
-    Ok(ctmatches
-        .drain(..)
-        .map(|ctmatch| CounterNameMatch {
-            pat: ctmatch.pat,
-            unit: ctmatch.unit.unwrap(),
-            vfilt: ctmatch.vfilt,
-        })
-        .collect())
+    Ok(ctmatches)
 }
 
 struct EthtoolParser {}
@@ -477,7 +458,6 @@ impl Parser for EthtoolParser {
 struct QdiscCounterRule {
     ifmatches: Vec<glob::Pattern>,
     hnmatches: Vec<QdiscHandleMatch>,
-    // xxx Qdisc counters have a known unit. Implement it as a fallback for unspecified units.
     ctmatches: Vec<CounterNameMatch>,
 }
 
@@ -533,10 +513,23 @@ impl ct::CounterRule for QdiscCounterRule {
 
             for ctmatch in &self.ctmatches {
                 if ctmatch.pat.matches(&qdisc_stat.name) {
-                    let ctname = format!(
-                        "{} {:x}:{:x} {:x}: {}",
-                        qdisc_stat.kind, pnmajor, pnminor, hnmajor, qdisc_stat.name
-                    );
+                    let ctname = if pnmajor == 0xffff && pnminor == 0xffff {
+                        format!(
+                            "root {:x}: {} {}",
+                            hnmajor, qdisc_stat.kind, qdisc_stat.name
+                        )
+                    } else {
+                        format!(
+                            "{:x}:{:x} {:x}: {} {}",
+                            pnmajor, pnminor, hnmajor, qdisc_stat.kind, qdisc_stat.name
+                        )
+                    };
+                    let unit = if ctmatch.unit.is_some() {
+                        ctmatch.unit.as_ref().unwrap().clone()
+                    } else {
+                        qdisc_stat.default_unit.clone()
+                    };
+
                     ret.push(ct::CounterImm {
                         key: ct::CounterKey {
                             ctns: "qdisc",
@@ -544,7 +537,7 @@ impl ct::CounterRule for QdiscCounterRule {
                             ctname: ctname,
                         },
                         value: qdisc_stat.value,
-                        unit: ctmatch.unit.clone(),
+                        unit: unit,
                         filter: ctmatch.vfilt.iter().map(|vf| vf.clone_box()).collect(),
                     });
                     break;
