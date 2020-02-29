@@ -515,16 +515,10 @@ impl ct::CounterRule for QdiscCounterRule {
 
             for ctmatch in &self.ctmatches {
                 if ctmatch.pat.matches(&qdisc_stat.name) {
-                    let ctname = if pnmajor == 0xffff && pnminor == 0xffff {
-                        format!(
-                            "root {:x}: {} {}",
-                            hnmajor, qdisc_stat.kind, qdisc_stat.name
-                        )
+                    let parent = if pnmajor == 0xffff && pnminor == 0xffff {
+                        "root".to_string()
                     } else {
-                        format!(
-                            "{:x}:{:x} {:x}: {} {}",
-                            pnmajor, pnminor, hnmajor, qdisc_stat.kind, qdisc_stat.name
-                        )
+                        format!("{:x}:{:x}", pnmajor, pnminor)
                     };
                     let unit = if ctmatch.unit.is_some() {
                         ctmatch.unit.as_ref().unwrap().clone()
