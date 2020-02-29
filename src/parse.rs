@@ -333,8 +333,10 @@ impl ct::CounterRule for EthtoolCounterRule {
                         ret.push(ct::CounterImm {
                             key: ct::CounterKey {
                                 ctns: "ethtool",
-                                ifname: ifname.clone(),
-                                ctname: stat.name.clone(),
+                                key: vec![
+                                    (ct::KeyHead::Ifname, ifname.clone()),
+                                    (ct::KeyHead::Name, stat.name.clone()),
+                                ],
                             },
                             value: stat.value,
                             unit: unit,
@@ -533,8 +535,13 @@ impl ct::CounterRule for QdiscCounterRule {
                     ret.push(ct::CounterImm {
                         key: ct::CounterKey {
                             ctns: "qdisc",
-                            ifname: qdisc_stat.ifname.clone(), // xxx clone?
-                            ctname: ctname,
+                            key: vec![
+                                (ct::KeyHead::Ifname, qdisc_stat.ifname.clone()),
+                                (ct::KeyHead::Parent, parent),
+                                (ct::KeyHead::Handle, format!("{:x}:", hnmajor)),
+                                (ct::KeyHead::Kind, qdisc_stat.kind),
+                                (ct::KeyHead::Name, qdisc_stat.name),
+                            ],
                         },
                         value: qdisc_stat.value,
                         unit: unit,

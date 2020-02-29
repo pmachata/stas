@@ -164,11 +164,50 @@ pub trait CounterValueFilter: std::fmt::Debug {
     fn clone_box(&self) -> Box<dyn CounterValueFilter>;
 }
 
+#[derive(Copy, Clone, Eq, PartialEq, Hash)]
+pub enum KeyHead {
+    Ifname,
+    Parent,
+    Handle,
+    Kind,
+    Name,
+}
+pub const ALL_HEADS: [KeyHead; 5] = [
+    KeyHead::Ifname,
+    KeyHead::Parent,
+    KeyHead::Handle,
+    KeyHead::Kind,
+    KeyHead::Name,
+];
+
+impl KeyHead {
+    pub fn separate(self) -> bool {
+        match self {
+            KeyHead::Ifname | KeyHead::Parent | KeyHead::Name => true,
+            KeyHead::Handle | KeyHead::Kind => false,
+        }
+    }
+    pub fn suppress_dups(self) -> bool {
+        match self {
+            KeyHead::Ifname | KeyHead::Parent | KeyHead::Handle | KeyHead::Kind => true,
+            KeyHead::Name => false,
+        }
+    }
+    pub fn column_head(self) -> &'static str {
+        match self {
+            KeyHead::Ifname => "if",
+            KeyHead::Parent => "par",
+            KeyHead::Handle => "hnd",
+            KeyHead::Kind => "kind",
+            KeyHead::Name => "counter",
+        }
+    }
+}
+
 #[derive(Eq, PartialEq)]
 pub struct CounterKey {
     pub ctns: &'static str,
-    pub ifname: String,
-    pub ctname: String,
+    pub key: Vec<(KeyHead, String)>,
 }
 
 pub struct CounterImm {

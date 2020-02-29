@@ -25,8 +25,7 @@ fn show_help_exit(rc: i32) {
 }
 
 struct CounterLine<'a> {
-    ifname: &'a str,
-    ctname: &'a str,
+    key: &'a stas::CounterKey,
     value: Option<stas::Value>,
     avg: Option<stas::Value>,
     freq: &'a stas::UFreq,
@@ -192,8 +191,7 @@ fn main() {
 
             let (value, avg, unit) = stas::convert(&entry.unit, value, avg);
             counter_lines.push(CounterLine {
-                ifname: &entry.key.ifname,
-                ctname: &entry.key.ctname,
+                key: &entry.key,
                 value: value,
                 avg: avg,
                 freq: &entry.unit.freq,
@@ -209,41 +207,66 @@ fn main() {
         print!("{}", termion::cursor::Goto(1, 1));
         let mut line = 1;
 
-        let headers = vec!["iface", "counter", "value", avg_s_str];
+        struct Column {
+            width: usize,
+            last: Option<String>,
+        }
+        let mut columns = std::collections::HashMap::new();
+        for entry in &state {
+            for (head, value) in &entry.key.key {
+                let column = columns.entry(head).or_insert(Column {
+                    width: head.column_head().len(),
+                    last: None,
+                });
+                column.width = std::cmp::max(column.width, value.len());
+            }
+        }
 
-        let ifname_col_w = state
+        let headers = &stas::ALL_HEADS
             .iter()
-            .map(|entry| entry.key.ifname.len())
-            .chain(vec![headers[0].len()].drain(..))
-            .max()
-            .unwrap();
-        let ctname_col_w = state
-            .iter()
-            .map(|entry| entry.key.ctname.len())
-            .chain(vec![headers[1].len()].drain(..))
-            .max()
-            .unwrap();
-
-        let mut line_out = |ifname: &str, ctname: &str, value: &str, avg: &str| {
-            print!(
-                "{}{}| {: <ifname_col_w$} | {: <ctname_col_w$} | {: >14} | {: >14} |",
-                termion::cursor::Goto(1, line as u16),
-                termion::clear::CurrentLine,
-                ifname,
-                ctname,
-                value,
-                avg,
-                ifname_col_w = ifname_col_w,
-                ctname_col_w = ctname_col_w
-            );
-            line += 1;
-        };
+            .filter(|head| columns.contains_key(head))
+            .map(|head| (*head, head.column_head().to_string()))
+            .collect();
+        let mut line_out =
+            |key: &Vec<(stas::KeyHead, String)>, value: &str, avg: &str, is_value: bool| {
+                print!(
+                    "{}{}",
+                    termion::cursor::Goto(1, line as u16),
+                    termion::clear::CurrentLine
+                );
+                let unused_head = "-".to_string();
+                for head in &stas::ALL_HEADS {
+                    if columns.contains_key(head) {
+                        let value = key
+                            .iter()
+                            .find(|(h, _v)| h == head)
+                            .map(|(_h, v)| v)
+                            .unwrap_or(&unused_head);
+                        let mut show = value.as_str();
+                        if is_value && head.suppress_dups() {
+                            if let Some(ref last) = &columns[head].last {
+                                if last == value {
+                                    show = "";
+                                }
+                            }
+                            columns.get_mut(head).unwrap().last = Some(value.to_string());
+                        }
+                        print!(
+                            "{} {: <w$} ",
+                            if head.separate() { "|" } else { "" },
+                            show,
+                            w = columns[head].width,
+                        );
+                    }
+                }
+                print!("| {: >14} | {: >14} |", value, avg,);
+                line += 1;
+            };
 
         print!("{}{}", termion::style::Invert, termion::style::Bold);
-        line_out(headers[0], headers[1], headers[2], headers[3]);
+        line_out(&headers, "value", avg_s_str, false);
         print!("{}", termion::style::Reset);
 
-        let mut last_ifname = "";
         for counter_line in &counter_lines {
             let unit_str = counter_line.unit.base.to_string()
                 + match counter_line.freq {
@@ -258,12 +281,7 @@ fn main() {
             };
 
             line_out(
-                if last_ifname != counter_line.ifname {
-                    &counter_line.ifname
-                } else {
-                    ""
-                },
-                &counter_line.ctname,
+                &counter_line.key.key,
                 &if counter_line.value.is_some() {
                     stas::humanize(
                         counter_line.value.unwrap(),
@@ -286,8 +304,8 @@ fn main() {
                 } else {
                     "-     ".to_string()
                 },
+                true,
             );
-            last_ifname = &counter_line.ifname;
         }
 
         print!(
