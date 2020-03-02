@@ -10,7 +10,7 @@ path = "src/lib.rs"
 
 [dependencies]
 nix = "*"
-neli = { git = "https://github.com/pmachata/neli.git" }
+neli = { git = "https://github.com/pmachata/neli.git", branch = "fixes-all" }
 libc = "*"
 glob = "*"
 termion = "1"
