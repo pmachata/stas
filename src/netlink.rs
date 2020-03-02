@@ -292,13 +292,18 @@ pub fn qdiscs() -> Vec<QdiscStat> {
     let mut ret = Vec::new();
 
     let mut socket = NlSocket::connect(NlFamily::Route, None, None, true).unwrap();
+    let dump_invisible = Rtattr {
+        rta_len: 4,
+        rta_type: Tca::DumpInvisible,
+        rta_payload: Vec::<u8>::new(),
+    };
     let tcm = Tcmsg {
         tcm_family: 0,
         tcm_ifindex: 0,
         tcm_handle: 0,
         tcm_parent: 0,
         tcm_info: 0,
-        rtattrs: Rtattrs::empty(),
+        rtattrs: Rtattrs::new(vec![dump_invisible]),
     };
     let nlhdr = {
         let len = None;
