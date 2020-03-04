@@ -79,6 +79,7 @@
   - class: @if 1:1 bytes                # mostly the same syntax like qdisc, but this time it select classes
                                         # it looks like fq_codel make difference between App counters for a qdisc
 					# and for a class, perhaps it's a more general thing
+  - link: @if rx.bytes tx.packets etc.  # "ip link" stats
   - action: @if [a:b|ingress|egress] [protocol x] [pref y] [chain z] [handle h] [action a] counter
     - filters are messy. It looks like we will need to use keywords to annotate
       what's what. Then "bytes" and "packets" (or just a glob, or mentioning

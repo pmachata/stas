@@ -13,24 +13,195 @@ use neli::Nl;
 use neli::StreamReadBuffer;
 use neli::StreamWriteBuffer;
 
-fn ifla_link_name_index(ifi: Nlmsghdr<u16, Ifinfomsg>) -> Option<(libc::c_int, String)> {
+struct RtnlLinkStats<T> {
+    rx_packets: T,
+    tx_packets: T,
+    rx_bytes: T,
+    tx_bytes: T,
+    rx_errors: T,
+    tx_errors: T,
+    rx_dropped: T,
+    tx_dropped: T,
+    multicast: T,
+    collisions: T,
+    rx_length_errors: T,
+    rx_over_errors: T,
+    rx_crc_errors: T,
+    rx_frame_errors: T,
+    rx_fifo_errors: T,
+    rx_missed_errors: T,
+    tx_aborted_errors: T,
+    tx_carrier_errors: T,
+    tx_fifo_errors: T,
+    tx_heartbeat_errors: T,
+    tx_window_errors: T,
+    rx_compressed: T,
+    tx_compressed: T,
+    rx_nohandler: T,
+}
+
+impl<T> Nl for RtnlLinkStats<T>
+where
+    T: Nl,
+{
+    fn serialize(&self, mem: &mut StreamWriteBuffer) -> Result<(), SerError> {
+        self.rx_packets.serialize(mem)?;
+        self.tx_packets.serialize(mem)?;
+        self.rx_bytes.serialize(mem)?;
+        self.tx_bytes.serialize(mem)?;
+        self.rx_errors.serialize(mem)?;
+        self.tx_errors.serialize(mem)?;
+        self.rx_dropped.serialize(mem)?;
+        self.tx_dropped.serialize(mem)?;
+        self.multicast.serialize(mem)?;
+        self.collisions.serialize(mem)?;
+        self.rx_length_errors.serialize(mem)?;
+        self.rx_over_errors.serialize(mem)?;
+        self.rx_crc_errors.serialize(mem)?;
+        self.rx_frame_errors.serialize(mem)?;
+        self.rx_fifo_errors.serialize(mem)?;
+        self.rx_missed_errors.serialize(mem)?;
+        self.tx_aborted_errors.serialize(mem)?;
+        self.tx_carrier_errors.serialize(mem)?;
+        self.tx_fifo_errors.serialize(mem)?;
+        self.tx_heartbeat_errors.serialize(mem)?;
+        self.tx_window_errors.serialize(mem)?;
+        self.rx_compressed.serialize(mem)?;
+        self.tx_compressed.serialize(mem)?;
+        self.rx_nohandler.serialize(mem)?;
+        Ok(())
+    }
+
+    fn deserialize<B>(mem: &mut StreamReadBuffer<B>) -> Result<Self, DeError>
+    where
+        B: AsRef<[u8]>,
+    {
+        Ok(RtnlLinkStats::<T> {
+            rx_packets: T::deserialize(mem)?,
+            tx_packets: T::deserialize(mem)?,
+            rx_bytes: T::deserialize(mem)?,
+            tx_bytes: T::deserialize(mem)?,
+            rx_errors: T::deserialize(mem)?,
+            tx_errors: T::deserialize(mem)?,
+            rx_dropped: T::deserialize(mem)?,
+            tx_dropped: T::deserialize(mem)?,
+            multicast: T::deserialize(mem)?,
+            collisions: T::deserialize(mem)?,
+            rx_length_errors: T::deserialize(mem)?,
+            rx_over_errors: T::deserialize(mem)?,
+            rx_crc_errors: T::deserialize(mem)?,
+            rx_frame_errors: T::deserialize(mem)?,
+            rx_fifo_errors: T::deserialize(mem)?,
+            rx_missed_errors: T::deserialize(mem)?,
+            tx_aborted_errors: T::deserialize(mem)?,
+            tx_carrier_errors: T::deserialize(mem)?,
+            tx_fifo_errors: T::deserialize(mem)?,
+            tx_heartbeat_errors: T::deserialize(mem)?,
+            tx_window_errors: T::deserialize(mem)?,
+            rx_compressed: T::deserialize(mem)?,
+            tx_compressed: T::deserialize(mem)?,
+            rx_nohandler: T::deserialize(mem)?,
+        })
+    }
+
+    fn size(&self) -> usize {
+        self.rx_packets.size()
+            + self.tx_packets.size()
+            + self.rx_bytes.size()
+            + self.tx_bytes.size()
+            + self.rx_errors.size()
+            + self.tx_errors.size()
+            + self.rx_dropped.size()
+            + self.tx_dropped.size()
+            + self.multicast.size()
+            + self.collisions.size()
+            + self.rx_length_errors.size()
+            + self.rx_over_errors.size()
+            + self.rx_crc_errors.size()
+            + self.rx_frame_errors.size()
+            + self.rx_fifo_errors.size()
+            + self.rx_missed_errors.size()
+            + self.tx_aborted_errors.size()
+            + self.tx_carrier_errors.size()
+            + self.tx_fifo_errors.size()
+            + self.tx_heartbeat_errors.size()
+            + self.tx_window_errors.size()
+            + self.rx_compressed.size()
+            + self.tx_compressed.size()
+            + self.rx_nohandler.size()
+    }
+}
+
+struct LinkInfo {
+    index: i32,
+    ifname: String,
+    stats: Option<RtnlLinkStats<u64>>,
+}
+
+fn ifla_link_info(ifi: Nlmsghdr<u16, Ifinfomsg>) -> Option<LinkInfo> {
     let index = ifi.nl_payload.ifi_index;
+    let mut ifname = None;
+    let mut stats = None;
+
     for attr in ifi.nl_payload.rtattrs {
         let payload: Vec<u8> = attr.rta_payload;
         match attr.rta_type {
             Ifla::Ifname => {
                 // Snip terminating zero.
                 let prefix = &payload[..(payload.len() - 1)];
-                return Some((index, String::from_utf8_lossy(prefix).into_owned()));
+                ifname = Some(String::from_utf8_lossy(prefix).into_owned());
             }
-            _ => break,
+            Ifla::Stats64 => {
+                let mut buf = StreamReadBuffer::new(&payload);
+                let stats64 = RtnlLinkStats::<u64>::deserialize(&mut buf).unwrap();
+                stats = Some(stats64);
+            }
+            Ifla::Stats => {
+                let mut buf = StreamReadBuffer::new(&payload);
+                let stats32 = RtnlLinkStats::<u32>::deserialize(&mut buf).unwrap();
+                stats = Some(RtnlLinkStats::<u64> {
+                    rx_packets: stats32.rx_packets as u64,
+                    tx_packets: stats32.tx_packets as u64,
+                    rx_bytes: stats32.rx_bytes as u64,
+                    tx_bytes: stats32.tx_bytes as u64,
+                    rx_errors: stats32.rx_errors as u64,
+                    tx_errors: stats32.tx_errors as u64,
+                    rx_dropped: stats32.rx_dropped as u64,
+                    tx_dropped: stats32.tx_dropped as u64,
+                    multicast: stats32.multicast as u64,
+                    collisions: stats32.collisions as u64,
+                    rx_length_errors: stats32.rx_length_errors as u64,
+                    rx_over_errors: stats32.rx_over_errors as u64,
+                    rx_crc_errors: stats32.rx_crc_errors as u64,
+                    rx_frame_errors: stats32.rx_frame_errors as u64,
+                    rx_fifo_errors: stats32.rx_fifo_errors as u64,
+                    rx_missed_errors: stats32.rx_missed_errors as u64,
+                    tx_aborted_errors: stats32.tx_aborted_errors as u64,
+                    tx_carrier_errors: stats32.tx_carrier_errors as u64,
+                    tx_fifo_errors: stats32.tx_fifo_errors as u64,
+                    tx_heartbeat_errors: stats32.tx_heartbeat_errors as u64,
+                    tx_window_errors: stats32.tx_window_errors as u64,
+                    rx_compressed: stats32.rx_compressed as u64,
+                    tx_compressed: stats32.tx_compressed as u64,
+                    rx_nohandler: stats32.rx_nohandler as u64,
+                });
+            }
+            _ => {}
         }
     }
 
-    None
+    if ifname.is_some() {
+        Some(LinkInfo {
+            index: index,
+            ifname: ifname.unwrap(),
+            stats: stats,
+        })
+    } else {
+        None
+    }
 }
 
-fn ifindices_ifnames() -> Vec<(libc::c_int, String)> {
+fn get_linkinfo() -> Vec<LinkInfo> {
     let mut socket = NlSocket::connect(NlFamily::Route, None, None, true).unwrap();
     let ifim: Ifinfomsg = {
         let ifi_family = RtAddrFamily::from(0);
@@ -52,24 +223,24 @@ fn ifindices_ifnames() -> Vec<(libc::c_int, String)> {
 
     socket.send_nl(nlhdr).unwrap();
 
-    let mut ifindices_ifnames = Vec::new();
+    let mut linkinfo = Vec::new();
     while let Ok(nl) = socket.recv_nl::<u16, Ifinfomsg>(None) {
-        if let Some(ifname_index) = ifla_link_name_index(nl) {
-            ifindices_ifnames.push(ifname_index);
+        if let Some(li) = ifla_link_info(nl) {
+            linkinfo.push(li);
         }
     }
-    ifindices_ifnames
+    linkinfo
 }
 
 pub fn ifnames() -> Vec<String> {
-    ifindices_ifnames()
-        .drain(..)
-        .map(|(_ifindex, name)| name)
-        .collect()
+    get_linkinfo().drain(..).map(|li| li.ifname).collect()
 }
 
 pub fn ifindex_map() -> std::collections::HashMap<libc::c_int, String> {
-    ifindices_ifnames().drain(..).collect()
+    get_linkinfo()
+        .drain(..)
+        .map(|li| (li.index, li.ifname))
+        .collect()
 }
 
 neli::impl_var_trait!(
@@ -192,6 +363,57 @@ where
     fn size(&self) -> usize {
         self.bps.size() + self.pps.size()
     }
+}
+
+#[derive(Debug)]
+pub struct LinkStat {
+    pub ifname: String,
+    pub name: String,
+    pub value: u64,
+    pub default_unit: ct::UnitChain,
+}
+
+pub fn get_link_stats() -> Vec<LinkStat> {
+    let mut link_stats = Vec::new();
+    for li in get_linkinfo() {
+        let ifname = li.ifname;
+        if let Some(stats) = li.stats {
+            let mut push = |name: &str, value: u64, default_unit: ct::UnitChain| {
+                link_stats.push(LinkStat {
+                    ifname: ifname.clone(),
+                    name: name.to_string(),
+                    value: value,
+                    default_unit: default_unit,
+                });
+            };
+            let pps = || ct::unit_packets_ps();
+            push("rx_packets", stats.rx_packets, pps());
+            push("tx_packets", stats.tx_packets, pps());
+            push("rx_bytes", stats.rx_bytes, ct::unit_bytes_bits_ps());
+            push("tx_bytes", stats.tx_bytes, ct::unit_bytes_bits_ps());
+            push("rx_errors", stats.rx_errors, pps());
+            push("tx_errors", stats.tx_errors, pps());
+            push("rx_dropped", stats.rx_dropped, pps());
+            push("tx_dropped", stats.tx_dropped, pps());
+            push("multicast", stats.multicast, pps());
+            push("collisions", stats.collisions, pps());
+            push("rx_length_errors", stats.rx_length_errors, pps());
+            push("rx_over_errors", stats.rx_over_errors, pps());
+            push("rx_crc_errors", stats.rx_crc_errors, pps());
+            push("rx_frame_errors", stats.rx_frame_errors, pps());
+            push("rx_fifo_errors", stats.rx_fifo_errors, pps());
+            push("rx_missed_errors", stats.rx_missed_errors, pps());
+            push("tx_aborted_errors", stats.tx_aborted_errors, pps());
+            push("tx_carrier_errors", stats.tx_carrier_errors, pps());
+            push("tx_fifo_errors", stats.tx_fifo_errors, pps());
+            push("tx_heartbeat_errors", stats.tx_heartbeat_errors, pps());
+            push("tx_window_errors", stats.tx_window_errors, pps());
+            push("rx_compressed", stats.rx_compressed, pps());
+            push("tx_compressed", stats.tx_compressed, pps());
+            push("rx_nohandler", stats.rx_nohandler, pps());
+        }
+    }
+    link_stats
 }
 
 #[derive(Debug)]

@@ -457,6 +457,74 @@ impl Parser for EthtoolParser {
 }
 
 #[derive(Debug)]
+struct LinkCounterRule {
+    ifmatches: Vec<glob::Pattern>,
+    ctmatches: Vec<CounterNameMatch>,
+}
+
+impl ct::CounterRule for LinkCounterRule {
+    fn counters(&self) -> Result<Vec<ct::CounterImm>, String> {
+        let mut ret = Vec::new();
+        for link_stat in netlink::get_link_stats() {
+            if !self
+                .ifmatches
+                .iter()
+                .any(|ref pat| pat.matches(&link_stat.ifname))
+            {
+                continue;
+            }
+
+            for ctmatch in &self.ctmatches {
+                if ctmatch.pat.matches(&link_stat.name) {
+                    let unit = if ctmatch.unit.is_some() {
+                        ctmatch.unit.as_ref().unwrap().clone()
+                    } else {
+                        link_stat.default_unit.clone()
+                    };
+
+                    ret.push(ct::CounterImm {
+                        key: ct::CounterKey {
+                            ctns: "link",
+                            key: vec![
+                                (ct::KeyHead::Ifname, link_stat.ifname.clone()),
+                                (ct::KeyHead::Name, link_stat.name),
+                            ],
+                        },
+                        value: link_stat.value,
+                        unit: unit,
+                        filter: ctmatch.vfilt.iter().map(|vf| vf.clone_box()).collect(),
+                    });
+                    break;
+                }
+            }
+        }
+        Ok(ret)
+    }
+}
+
+struct LinkParser {}
+
+impl Parser for LinkParser {
+    fn parse(
+        &self,
+        words: &mut Peekable<std::slice::Iter<String>>,
+    ) -> Result<Vec<Box<dyn ct::CounterRule>>, String> {
+        if words.peek().is_none() {
+            return Ok(Vec::new());
+        }
+
+        let ifmatches = parse_ifmatches(words)?;
+        let ctmatches = parse_ctmatches(words)?;
+
+        let ret: Vec<Box<dyn ct::CounterRule>> = vec![Box::new(LinkCounterRule {
+            ifmatches: ifmatches,
+            ctmatches: ctmatches,
+        })];
+        Ok(ret)
+    }
+}
+
+#[derive(Debug)]
 struct QdiscCounterRule {
     ifmatches: Vec<glob::Pattern>,
     hnmatches: Vec<QdiscHandleMatch>,
@@ -573,8 +641,11 @@ impl Parser for QdiscParser {
     }
 }
 
-const PARSERS: [(&str, &dyn Parser); 2] =
-    [("ethtool", &EthtoolParser {}), ("qdisc", &QdiscParser {})];
+const PARSERS: [(&str, &dyn Parser); 3] = [
+    ("ethtool", &EthtoolParser {}),
+    ("link", &LinkParser {}),
+    ("qdisc", &QdiscParser {}),
+];
 
 pub fn parse_expr(
     words: &mut Peekable<std::slice::Iter<String>>,
